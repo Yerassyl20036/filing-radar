@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Filing radar · status</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1f1f1d; --muted: #6b6a66; --line: #e4e3de;
+    --up: #2f9e5b; --stale: #c98a16; --down: #d0453a;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --card: #1f1f1e; --text: #ecebe6; --muted: #9c9a92; --line: #33332f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); line-height: 1.5; }
+  main { max-width: 920px; margin: 0 auto; padding: 48px 16px; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 32px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .server { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .server h2 { font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+  .comp { display: grid; grid-template-columns: 12px 1fr; gap: 4px 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .comp:first-of-type { border-top: 0; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.up { background: var(--up); } .dot.stale { background: var(--stale); } .dot.down { background: var(--down); }
+  .name { font-weight: 550; }
+  .note { grid-column: 2; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+  .how { margin-top: 32px; color: var(--muted); font-size: 14px; }
+  .how code { font-size: 13px; }
+  footer { margin-top: 32px; color: var(--muted); font-size: 13px; }
+  .banner { display: none; margin-bottom: 16px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--down); color: var(--down); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Filing radar</h1>
+  <p class="lead">Live status of every part of the system, across three servers. The filing feed comes next.</p>
+  <div class="banner" id="banner">The status API isn't answering. Retrying…</div>
+  <div class="grid" id="grid"></div>
+  <p class="how">
+    The worker in Ashburn reaches Postgres in Frankfurt and Temporal in Ashburn-2 through SSH tunnels,
+    so neither is open to the internet. Every minute it runs a small Temporal workflow end to end and records the result.
+  </p>
+  <footer id="checked">Checking…</footer>
+</main>
+<script>
+  const grid = document.getElementById('grid');
+  const banner = document.getElementById('banner');
+  const checked = document.getElementById('checked');
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function render(data) {
+    const servers = new Map();
+    for (const c of data.components) {
+      if (!servers.has(c.server)) servers.set(c.server, []);
+      servers.get(c.server).push(c);
+    }
+    grid.replaceChildren();
+    for (const [server, comps] of servers) {
+      const card = el('section', 'server');
+      card.append(el('h2', '', server));
+      for (const c of comps) {
+        const row = el('div', 'comp');
+        row.append(el('span', 'dot ' + c.state), el('span', 'name', c.name), el('span', 'note', c.note));
+        row.title = c.state;
+        card.append(row);
+      }
+      grid.append(card);
+    }
+    checked.textContent = 'Checked ' + new Date(data.checked_at).toLocaleTimeString() + ' · refreshes every 5 seconds';
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/status', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      render(await r.json());
+      banner.style.display = 'none';
+    } catch {
+      banner.style.display = 'block';
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+# Everything on your laptop, without tunnels:
+#   docker compose -f deploy/local/compose.yml up --build
+# then open http://localhost:8088
+name: radar-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: radar
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: radar
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar -d radar"]
+      interval: 3s
+      retries: 20
+
+  temporal:
+    image: temporalio/temporal:1.9.1
+    command: ["server", "start-dev", "--ip", "0.0.0.0"]
+    ports: ["127.0.0.1:7233:7233", "127.0.0.1:8233:8233"]
+
+  web:
+    build: ../..
+    environment:
+      DATABASE_URL: postgres://radar:radar@postgres:5432/radar?sslmode=disable
+      SERVER_NAME: frankfurt-1
+    ports: ["127.0.0.1:8088:8080"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: ../..
+    entrypoint: ["/usr/local/bin/worker"]
+    environment:
+      DATABASE_URL: postgres://radar:radar@postgres:5432/radar?sslmode=disable
+      TEMPORAL_ADDRESS: temporal:7233
+      SERVER_NAME: ashburn-1
+      TEMPORAL_SERVER_NAME: ashburn-2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started

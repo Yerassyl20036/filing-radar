@@ -1,0 +1,55 @@
+# Frankfurt (oracle-ad2-fd1): Postgres, the website and Caddy for HTTPS.
+# Postgres listens on localhost only; the worker reaches it through an SSH
+# tunnel as the restricted `tunnel` user.
+name: radar
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: radar
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    # Sized for a 1 GB server.
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=30", "-c", "work_mem=4MB"]
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar -d radar"]
+      interval: 10s
+      retries: 6
+    mem_limit: 256m
+
+  web:
+    image: ${IMAGE:?}:${TAG:?}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://radar:${POSTGRES_PASSWORD:?}@postgres:5432/radar?sslmode=disable
+      SERVER_NAME: frankfurt-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/web", "-healthcheck"]
+      interval: 15s
+      retries: 4
+    mem_limit: 96m
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [web]
+    mem_limit: 96m
+
+volumes:
+  pgdata:
+  caddy-data:
+  caddy-config:

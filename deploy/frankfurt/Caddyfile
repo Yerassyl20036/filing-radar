@@ -1,0 +1,7 @@
+# Caddy gets a Let's Encrypt certificate for SITE_DOMAIN on its own.
+# Until there is a real domain, SITE_DOMAIN is an sslip.io name that resolves
+# to the server's IP (92-5-5-44.sslip.io → 92.5.5.44).
+{$SITE_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:8080
+}

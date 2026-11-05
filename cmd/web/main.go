@@ -1,0 +1,149 @@
+// Command web serves the radar's website and API from the Frankfurt server.
+// For now the site is a live status page for every part of the system; the
+// filing feed is stage 1.
+package main
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"flag"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/Yerassyl20036/filing-radar/internal/status"
+	"github.com/Yerassyl20036/filing-radar/internal/store"
+)
+
+//go:embed status.html
+var statusPage []byte
+
+func main() {
+	healthcheck := flag.Bool("healthcheck", false, "check /healthz on ADDR and exit; used by the Docker health check")
+	flag.Parse()
+
+	addr := env("ADDR", ":8080")
+	if *healthcheck {
+		os.Exit(checkHealth(addr))
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	st, err := store.Open(ctx, mustEnv("DATABASE_URL"))
+	if err != nil {
+		fatal("open database", err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		fatal("migrate", err)
+	}
+
+	s := &server{store: st, name: env("SERVER_NAME", "local")}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", s.page)
+	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /api/status", s.status)
+
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+	}()
+
+	slog.Info("web listening", "addr", addr, "server", s.name)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		fatal("serve", err)
+	}
+}
+
+type server struct {
+	store *store.Store
+	name  string // which machine this is, shown on the status page
+}
+
+func (s *server) page(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(statusPage)
+}
+
+func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.store.Ping(ctx); err != nil {
+		http.Error(w, "database unreachable", http.StatusServiceUnavailable)
+		return
+	}
+	_, _ = w.Write([]byte("ok\n"))
+}
+
+func (s *server) status(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	dbErr := s.store.Ping(ctx)
+	latency := time.Since(start)
+
+	var beats []store.Heartbeat
+	if dbErr == nil {
+		var err error
+		if beats, err = s.store.Heartbeats(ctx); err != nil {
+			slog.Error("read heartbeats", "err", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"checked_at": time.Now().UTC(),
+		"components": status.Build(time.Now(), s.name, dbErr, latency, beats),
+	})
+}
+
+// checkHealth calls our own /healthz. The runtime image has no shell or curl,
+// so the binary checks itself.
+func checkHealth(addr string) int {
+	host := addr
+	if strings.HasPrefix(host, ":") {
+		host = "127.0.0.1" + host
+	}
+	c := http.Client{Timeout: 3 * time.Second}
+	resp, err := c.Get("http://" + host + "/healthz")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func mustEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		fatal("missing configuration", errors.New(key+" is not set"))
+	}
+	return v
+}
+
+func fatal(msg string, err error) {
+	slog.Error(msg, "err", err)
+	os.Exit(1)
+}

@@ -1,0 +1,104 @@
+# Run by hand: Actions → deploy → Run workflow.
+# Builds the images, then deploys Temporal, Frankfurt and the worker in that
+# order (the worker needs the other two), then checks the worker reported in.
+name: deploy
+
+on:
+  workflow_dispatch:
+
+concurrency: deploy
+
+env:
+  IMAGE: ghcr.io/yerassyl20036/filing-radar
+  TUNNEL_IMAGE: ghcr.io/yerassyl20036/filing-radar-tunnel
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./... && go test ./...
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: deploy/tunnel
+          push: true
+          tags: ${{ env.TUNNEL_IMAGE }}:${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TAG: ${{ github.sha }}
+      GHCR_USER: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      SITE_DOMAIN: ${{ secrets.SITE_DOMAIN }}
+      FRANKFURT_HOST: ${{ secrets.FRANKFURT_HOST }}
+      WORKER_HOST: ${{ secrets.WORKER_HOST }}
+      TEMPORAL_HOST: ${{ secrets.TEMPORAL_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH as the deploy user
+        env:
+          DEPLOY_SSH_KEY_B64: ${{ secrets.DEPLOY_SSH_KEY_B64 }}
+          KNOWN_HOSTS_B64: ${{ secrets.KNOWN_HOSTS_B64 }}
+        run: |
+          install -d -m 700 ~/.ssh
+          echo "$DEPLOY_SSH_KEY_B64" | base64 -d > ~/.ssh/deploy
+          echo "$KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy
+          printf 'Host *\n  User deploy\n  IdentityFile ~/.ssh/deploy\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ConnectTimeout 15\n' > ~/.ssh/config
+
+      - name: Temporal (Ashburn-2)
+        run: deploy/deploy.sh ashburn-temporal "$TEMPORAL_HOST"
+
+      - name: Postgres, website, Caddy (Frankfurt)
+        run: deploy/deploy.sh frankfurt "$FRANKFURT_HOST" IMAGE TAG POSTGRES_PASSWORD SITE_DOMAIN
+
+      - name: Tunnel key for the worker
+        env:
+          TUNNEL_SSH_KEY_B64: ${{ secrets.TUNNEL_SSH_KEY_B64 }}
+          KNOWN_HOSTS_B64: ${{ secrets.KNOWN_HOSTS_B64 }}
+        run: |
+          ssh "$WORKER_HOST" "mkdir -p /opt/filing-radar/ashburn-worker/keys && chmod 700 /opt/filing-radar/ashburn-worker/keys"
+          echo "$TUNNEL_SSH_KEY_B64" | base64 -d | ssh "$WORKER_HOST" "umask 077 && cat > /opt/filing-radar/ashburn-worker/keys/tunnel_ed25519"
+          echo "$KNOWN_HOSTS_B64" | base64 -d | ssh "$WORKER_HOST" "umask 077 && cat > /opt/filing-radar/ashburn-worker/keys/known_hosts"
+
+      - name: Worker and tunnels (Ashburn-1)
+        run: deploy/deploy.sh ashburn-worker "$WORKER_HOST" IMAGE TUNNEL_IMAGE TAG POSTGRES_PASSWORD FRANKFURT_HOST TEMPORAL_HOST
+
+      # Proves the whole chain without needing public ports: the worker must
+      # have reached Postgres and Temporal through both tunnels.
+      - name: Check the worker reported through both tunnels
+        run: |
+          for i in $(seq 1 24); do
+            row=$(ssh "$FRANKFURT_HOST" "cd /opt/filing-radar/frankfurt && docker compose exec -T postgres psql -U radar -d radar -tAc \"SELECT detail->>'temporal_ok' FROM heartbeats WHERE service = 'worker' AND last_seen > now() - interval '3 minutes'\"" || true)
+            if [ "$row" = "true" ]; then echo "worker → Postgres and worker → Temporal both OK"; exit 0; fi
+            echo "waiting for the worker (attempt $i)…"; sleep 10
+          done
+          ssh "$WORKER_HOST" "cd /opt/filing-radar/ashburn-worker && docker compose logs --tail 40"
+          exit 1
+
+      - name: Check the public website
+        continue-on-error: true # fails until ports 80 and 443 are open on the Frankfurt server
+        run: curl -fsS --retry 6 --retry-delay 10 --retry-all-errors "https://$SITE_DOMAIN/healthz"

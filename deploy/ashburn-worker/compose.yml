@@ -1,0 +1,31 @@
+# Ashburn-1 (oracle-ad3-fd3-1): the worker. Postgres (Frankfurt) and Temporal
+# (Ashburn-2) are reached through two SSH tunnels, so neither server has to
+# open a database port to the internet.
+name: radar-worker
+
+services:
+  pg-tunnel:
+    image: ${TUNNEL_IMAGE:?}:${TAG:?}
+    restart: unless-stopped
+    command: ["-L", "0.0.0.0:5432:127.0.0.1:5432", "tunnel@${FRANKFURT_HOST:?}"]
+    volumes: ["./keys:/keys:ro"]
+    mem_limit: 32m
+
+  temporal-tunnel:
+    image: ${TUNNEL_IMAGE:?}:${TAG:?}
+    restart: unless-stopped
+    command: ["-L", "0.0.0.0:7233:127.0.0.1:7233", "tunnel@${TEMPORAL_HOST:?}"]
+    volumes: ["./keys:/keys:ro"]
+    mem_limit: 32m
+
+  worker:
+    image: ${IMAGE:?}:${TAG:?}
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/worker"]
+    environment:
+      DATABASE_URL: postgres://radar:${POSTGRES_PASSWORD:?}@pg-tunnel:5432/radar?sslmode=disable
+      TEMPORAL_ADDRESS: temporal-tunnel:7233
+      SERVER_NAME: ashburn-1
+      TEMPORAL_SERVER_NAME: ashburn-2
+    depends_on: [pg-tunnel, temporal-tunnel]
+    mem_limit: 128m
