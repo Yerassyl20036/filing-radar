@@ -57,10 +57,28 @@ func Open(ctx context.Context, url string) (*Store, error) {
 
 func (s *Store) Close() { s.pool.Close() }
 
+// migrateLock is the advisory-lock key every caller of Migrate shares.
+const migrateLock = 7301001
+
 // Migrate creates the tables if they don't exist yet. Every statement in
-// schema.sql must be safe to run again.
+// schema.sql must be safe to run again. The web server and the worker both
+// call it at startup, and two concurrent CREATE TABLE IF NOT EXISTS can still
+// collide inside Postgres, so a transaction-scoped advisory lock makes them
+// take turns.
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, err := s.pool.Exec(ctx, schema); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, migrateLock); err != nil {
+		return fmt.Errorf("migrate: take lock: %w", err)
+	}
+	if _, err := tx.Exec(ctx, schema); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	return nil
