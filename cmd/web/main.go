@@ -1,11 +1,11 @@
 // Command web serves the radar's website and API from the Frankfurt server.
-// For now the site is a live status page for every part of the system; the
+// For now the site is a live status page and a "how it works" page; the
 // filing feed is stage 1.
 package main
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,8 +21,10 @@ import (
 	"github.com/Yerassyl20036/filing-radar/internal/store"
 )
 
-//go:embed status.html
-var statusPage []byte
+// The pages and stylesheet are built into the binary, so a deploy is one image.
+//
+//go:embed static
+var static embed.FS
 
 func main() {
 	healthcheck := flag.Bool("healthcheck", false, "check /healthz on ADDR and exit; used by the Docker health check")
@@ -47,7 +49,9 @@ func main() {
 
 	s := &server{store: st, name: env("SERVER_NAME", "local")}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", s.page)
+	mux.HandleFunc("GET /{$}", page("static/status.html"))
+	mux.HandleFunc("GET /how-it-works", page("static/how.html"))
+	mux.Handle("GET /static/", http.FileServerFS(static))
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /api/status", s.status)
 
@@ -70,9 +74,17 @@ type server struct {
 	name  string // which machine this is, shown on the status page
 }
 
-func (s *server) page(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(statusPage)
+// page serves one embedded HTML file. A missing file is a build mistake, so it
+// fails at startup rather than on the first request.
+func page(name string) http.HandlerFunc {
+	body, err := static.ReadFile(name)
+	if err != nil {
+		panic(err)
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(body)
+	}
 }
 
 func (s *server) healthz(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Filing radar · how it works</title>
+<meta name="description" content="How Filing radar is built: three small servers, SSH tunnels, Temporal, and the path every SEC filing takes.">
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a class="brand" href="/">Filing radar</a>
+    <a href="/">Status</a>
+    <a href="/how-it-works" aria-current="page">How it works</a>
+  </nav>
+
+  <h1>How it works</h1>
+  <p class="lead">
+    Filing radar reads every new SEC filing within minutes, explains what changed with a source for every claim,
+    and checks each prediction against how the stock actually moved the next day. Below is how it's built,
+    what's live today, and what comes next.
+  </p>
+
+  <h2>What runs where</h2>
+  <div class="card">
+    <div class="arch-wrap">
+    <svg class="arch" viewBox="0 0 720 392" role="img" aria-labelledby="arch-title arch-desc">
+      <title id="arch-title">Architecture</title>
+      <desc id="arch-desc">Visitors reach Caddy and the Go web server in Frankfurt, which reads Postgres. The worker in Ashburn-1 reaches Postgres and the Temporal server in Ashburn-2 through SSH tunnels. SEC EDGAR feeds the worker from stage 1.</desc>
+      <defs>
+        <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M1 1 L9 5 L1 9 z" style="fill: var(--muted)"/>
+        </marker>
+      </defs>
+
+      <rect class="ext" x="50" y="12" width="170" height="40" rx="8"/>
+      <text x="135" y="37" text-anchor="middle">Visitors</text>
+      <rect class="ext" x="285" y="12" width="170" height="40" rx="8"/>
+      <text x="370" y="29" text-anchor="middle">SEC EDGAR</text>
+      <text class="sub" x="370" y="45" text-anchor="middle">feeds the worker in stage 1</text>
+
+      <rect class="server" x="20" y="76" width="230" height="300" rx="14"/>
+      <text class="label" x="36" y="100">FRANKFURT</text>
+      <rect class="server" x="270" y="76" width="200" height="300" rx="14"/>
+      <text class="label" x="286" y="100">ASHBURN-1</text>
+      <rect class="server" x="490" y="76" width="210" height="300" rx="14"/>
+      <text class="label" x="506" y="100">ASHBURN-2</text>
+
+      <rect class="node" x="50" y="114" width="170" height="52" rx="8"/>
+      <text x="135" y="136" text-anchor="middle">Caddy</text>
+      <text class="sub" x="135" y="154" text-anchor="middle">HTTPS and certificates</text>
+      <circle class="state" id="s-caddy" cx="206" cy="128" r="5"/>
+
+      <rect class="node" x="50" y="204" width="170" height="52" rx="8"/>
+      <text x="135" y="226" text-anchor="middle">web</text>
+      <text class="sub" x="135" y="244" text-anchor="middle">Go: pages and API</text>
+      <circle class="state" id="s-web" cx="206" cy="218" r="5"/>
+
+      <rect class="node" x="50" y="294" width="170" height="52" rx="8"/>
+      <text x="135" y="316" text-anchor="middle">Postgres</text>
+      <text class="sub" x="135" y="334" text-anchor="middle">health now, filings next</text>
+      <circle class="state" id="s-pg" cx="206" cy="308" r="5"/>
+
+      <rect class="node" x="285" y="204" width="170" height="52" rx="8"/>
+      <text x="370" y="226" text-anchor="middle">worker</text>
+      <text class="sub" x="370" y="244" text-anchor="middle">Go + Temporal SDK</text>
+      <circle class="state" id="s-worker" cx="441" cy="218" r="5"/>
+      <text class="sub" x="370" y="282" text-anchor="middle">+ two SSH tunnel containers</text>
+
+      <rect class="node" x="510" y="204" width="170" height="52" rx="8"/>
+      <text x="595" y="226" text-anchor="middle">Temporal</text>
+      <text class="sub" x="595" y="244" text-anchor="middle">single binary, SQLite</text>
+      <circle class="state" id="s-temporal" cx="666" cy="218" r="5"/>
+      <text class="sub" x="595" y="282" text-anchor="middle">its UI is private</text>
+
+      <line class="link" x1="135" y1="52" x2="135" y2="111" marker-end="url(#head)"/>
+      <line class="link" x1="135" y1="166" x2="135" y2="201" marker-end="url(#head)"/>
+      <line class="link" x1="135" y1="256" x2="135" y2="291" marker-end="url(#head)"/>
+      <line class="link tunnel" x1="370" y1="52" x2="370" y2="201" marker-end="url(#head)"/>
+      <path class="link tunnel" d="M285 230 H258 V320 H223" marker-end="url(#head)"/>
+      <line class="link tunnel" x1="455" y1="230" x2="507" y2="230" marker-end="url(#head)"/>
+    </svg>
+    </div>
+    <div class="legend">
+      <span>Dots are live: <span style="color:var(--up)">●</span> up <span style="color:var(--stale)">●</span> stale <span style="color:var(--down)">●</span> down</span>
+      <span>Dashed lines from the worker are SSH tunnels</span>
+      <span>Only Caddy is open to the internet</span>
+    </div>
+    <div class="live-line" id="live">Checking live status…</div>
+  </div>
+
+  <div class="table-wrap" style="margin-top:16px">
+    <table class="servers">
+      <tr><th>Server</th><th>Runs</th><th>Open to the internet</th></tr>
+      <tr><td>Frankfurt</td><td>Caddy, the Go web server, Postgres</td><td>ports 80 and 443, Caddy only</td></tr>
+      <tr><td>Ashburn-1</td><td>the worker and two SSH tunnels</td><td>nothing</td></tr>
+      <tr><td>Ashburn-2</td><td>Temporal's single-binary server</td><td>nothing</td></tr>
+    </table>
+  </div>
+
+  <h2>What happens to one filing</h2>
+  <ol class="steps">
+    <li><span class="n">1</span><div><b>Fetch.</b><p>Every minute the worker reads EDGAR's latest-filings feed and stores each filing once, keyed by its accession number.</p></div><span class="pill next">stage 1, next</span></li>
+    <li><span class="n">2</span><div><b>Triage.</b><p>Plain rules read the 8-K item numbers, then a model scores how material the filing is. Most filings never reach an LLM.</p></div><span class="pill">stage 2</span></li>
+    <li><span class="n">3</span><div><b>Analyst agent.</b><p>For material filings: compare with the company's previous filing and write a short note on what changed.</p></div><span class="pill">stage 3</span></li>
+    <li><span class="n">4</span><div><b>Check.</b><p>Every claim must cite a passage that really exists in the filing, or the note isn't published.</p></div><span class="pill">stage 3</span></li>
+    <li><span class="n">5</span><div><b>Publish.</b><p>The note appears in the feed with links to the original filing on sec.gov.</p></div><span class="pill">stages 1–3</span></li>
+    <li><span class="n">6</span><div><b>Score.</b><p>A Temporal workflow waits until after the next market close, fetches the price move, and checks the prediction. Scores are public.</p></div><span class="pill">stage 4</span></li>
+  </ol>
+  <p class="muted" style="font-size:14px">Live today is stage 0: the three servers, the deploy pipeline, the tunnels and the health checks this page reads.</p>
+
+  <h2>Data sources</h2>
+  <ul class="decisions">
+    <li><a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent">EDGAR latest filings</a> <span>— the live feed the worker will poll.</span></li>
+    <li><a href="https://www.sec.gov/Archives/edgar/daily-index/">EDGAR daily index</a> <span>— every filing of each day, used to repair gaps.</span></li>
+    <li><a href="https://www.sec.gov/developer">SEC developer resources</a> <span>— the access rules: a declared User-Agent and at most 10 requests per second. The radar stays under 1.</span></li>
+  </ul>
+
+  <h2>Decisions</h2>
+  <ul class="decisions">
+    <li>Three servers with 1 GB of RAM each. <span>Go binaries use tens of MB and Temporal's single-binary server under 100 MB, so Kubernetes would cost more than everything else combined.</span></li>
+    <li>No database port on the internet. <span>The worker reaches Postgres and Temporal through SSH tunnels; each tunnel key may open exactly one port on one machine.</span></li>
+    <li>A model only where rules can't decide. <span>Item numbers and form types are rules; only filings that might matter go to an LLM.</span></li>
+    <li>Every claim is checked before it's published. <span>A note whose citation doesn't match the filing's text is retried or dropped.</span></li>
+    <li>Temporal for waiting, not for everything. <span>The one-minute poll is safe to repeat and needs no workflow engine; the next-day score has to survive restarts, so it gets one.</span></li>
+    <li>Deploys by hand, from <code>main</code> only. <span>The pipeline ends by proving the worker reached both other servers.</span></li>
+  </ul>
+
+  <h2>Project layout</h2>
+<pre class="tree">cmd/web          <span class="c">website and API, runs in Frankfurt</span>
+cmd/worker       <span class="c">Temporal worker and health reports, runs in Ashburn-1</span>
+internal/store   <span class="c">Postgres access and schema</span>
+internal/status  <span class="c">turns health reports into what the status page shows</span>
+internal/ping    <span class="c">the one-minute Temporal round trip</span>
+deploy/          <span class="c">one folder per server, the tunnel image, a local setup</span>
+.github/         <span class="c">tests on every push, deploys by hand</span></pre>
+
+  <footer>Built by Yerassyl Maratov · <a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a></footer>
+</main>
+<script>
+  // Colour the diagram's dots from the same API the status page uses.
+  const dotFor = { Website: ['s-caddy', 's-web'], Postgres: ['s-pg'], Worker: ['s-worker'], Temporal: ['s-temporal'] };
+  const live = document.getElementById('live');
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/status', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      const { components } = await r.json();
+      for (const c of components) {
+        for (const id of dotFor[c.name] || []) document.getElementById(id).setAttribute('class', 'state ' + c.state);
+      }
+      const up = components.filter(c => c.state === 'up').length;
+      const notes = components.filter(c => c.name === 'Temporal' || c.name === 'Worker').map(c => c.name + ': ' + c.note);
+      live.textContent = `Live now: ${up} of ${components.length} parts up · ${notes.join(' · ')}`;
+    } catch {
+      live.textContent = "Live status isn't answering right now.";
+    }
+  }
+  refresh();
+  setInterval(refresh, 10000);
+</script>
+</body>
+</html>
