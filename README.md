@@ -45,9 +45,20 @@ The `deploy` workflow runs by hand (Actions → deploy → Run workflow):
 2. Deploy Temporal, then Frankfurt, then the worker, each over SSH as the `deploy` user.
 3. Wait until the worker has reported through both tunnels.
 
-It needs these repository secrets: `DEPLOY_SSH_KEY_B64`, `TUNNEL_SSH_KEY_B64`,
-`KNOWN_HOSTS_B64`, `POSTGRES_PASSWORD`, `FRANKFURT_HOST`, `WORKER_HOST`,
-`TEMPORAL_HOST`, `SITE_DOMAIN`.
+Its settings live in the `production` environment (Settings → Environments),
+which only accepts deploys from `main`:
+
+| Kind | Name | What it is |
+|---|---|---|
+| Secret | `DEPLOY_SSH_KEY_B64` | SSH key for the `deploy` user on all three servers |
+| Secret | `TUNNEL_SSH_KEY_B64` | SSH key for the `tunnel` user, used by the worker's tunnels |
+| Secret | `KNOWN_HOSTS_B64` | the three servers' host keys, so SSH can't be pointed at an impostor |
+| Secret | `POSTGRES_PASSWORD` | database password |
+| Variable | `SITE_DOMAIN` | the site's name; Caddy gets its certificate |
+| Variable | `FRANKFURT_HOST`, `WORKER_HOST`, `TEMPORAL_HOST` | server IPs |
+
+To move to a real domain, point its A record at the Frankfurt IP, change
+`SITE_DOMAIN`, and deploy again.
 
 ## Running locally
 

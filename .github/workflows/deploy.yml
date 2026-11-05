@@ -43,6 +43,11 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # Secrets and variables come from the `production` environment, which
+    # only accepts deploys from main.
+    environment:
+      name: production
+      url: https://${{ vars.SITE_DOMAIN }}
     permissions:
       contents: read
       packages: read
@@ -51,10 +56,10 @@ jobs:
       GHCR_USER: ${{ github.actor }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-      SITE_DOMAIN: ${{ secrets.SITE_DOMAIN }}
-      FRANKFURT_HOST: ${{ secrets.FRANKFURT_HOST }}
-      WORKER_HOST: ${{ secrets.WORKER_HOST }}
-      TEMPORAL_HOST: ${{ secrets.TEMPORAL_HOST }}
+      SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
+      FRANKFURT_HOST: ${{ vars.FRANKFURT_HOST }}
+      WORKER_HOST: ${{ vars.WORKER_HOST }}
+      TEMPORAL_HOST: ${{ vars.TEMPORAL_HOST }}
     steps:
       - uses: actions/checkout@v4
 
@@ -100,5 +105,5 @@ jobs:
           exit 1
 
       - name: Check the public website
-        continue-on-error: true # fails until ports 80 and 443 are open on the Frankfurt server
+        continue-on-error: true # Let's Encrypt can take a minute on the first deploy
         run: curl -fsS --retry 6 --retry-delay 10 --retry-all-errors "https://$SITE_DOMAIN/healthz"
