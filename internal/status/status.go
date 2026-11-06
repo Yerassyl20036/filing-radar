@@ -1,6 +1,6 @@
 // Package status turns raw health signals into the components the status
-// page shows: the website, Postgres, the worker, Temporal, the ingestor and
-// triage.
+// page shows: the website, Postgres, the worker, Temporal, the ingestor,
+// triage and the models' spend.
 package status
 
 import (
@@ -60,18 +60,26 @@ type IngestorDetail struct {
 	Error     string     `json:"error,omitempty"`
 }
 
+// Spend is what the model calls have cost since midnight UTC, read from the
+// same database. Err is set when it couldn't be read.
+type Spend struct {
+	USD   float64
+	Calls int
+	Err   error
+}
+
 // Build answers "is each part working?". The web server can only see its own
 // database directly; Temporal sits behind the worker, so its state comes from
 // the round trip the worker last reported. Triage is judged by its backlog,
 // read from the same database.
-func Build(now time.Time, webServer string, dbErr error, dbLatency time.Duration, beats []store.Heartbeat, backlog store.Backlog, backlogErr error) []Component {
+func Build(now time.Time, webServer string, dbErr error, dbLatency time.Duration, beats []store.Heartbeat, backlog store.Backlog, backlogErr error, spend Spend) []Component {
 	comps := []Component{
 		{Name: "Website", Server: webServer, State: Up, Note: "answering requests"},
 		database(webServer, dbErr, dbLatency),
 	}
 	comps = append(comps, workerAndTemporal(now, find(beats, "worker"))...)
 	comps = append(comps, ingestor(now, find(beats, "ingestor")))
-	return append(comps, triageQueue(now, dbErr, backlog, backlogErr))
+	return append(comps, triageQueue(now, dbErr, backlog, backlogErr), models(dbErr, spend))
 }
 
 func find(beats []store.Heartbeat, service string) *store.Heartbeat {
@@ -184,6 +192,28 @@ func triageQueue(now time.Time, dbErr error, b store.Backlog, err error) Compone
 	}
 	c.Note = fmt.Sprintf("%s waiting, oldest %s", count(b.Pending, "filing"), ago(age))
 	return c
+}
+
+// models shows what the model calls cost today. Spending is not a failure:
+// when the daily budget runs out the worker stops calling and the rules'
+// labels stand, so the component stays up. It is only stale when the spend
+// can't be read.
+func models(dbErr error, s Spend) Component {
+	c := Component{Name: "Models", Server: "ashburn-1", State: Up}
+	if dbErr != nil || s.Err != nil {
+		c.State, c.Note = Stale, "spend unavailable"
+		return c
+	}
+	c.Note = fmt.Sprintf("%s today, %s", count(s.Calls, "call"), dollars(s.USD))
+	return c
+}
+
+// dollars keeps four decimals under a dollar, where a day's spend usually is.
+func dollars(usd float64) string {
+	if usd < 1 {
+		return fmt.Sprintf("$%.4f", usd)
+	}
+	return fmt.Sprintf("$%.2f", usd)
 }
 
 func count(n int, noun string) string {

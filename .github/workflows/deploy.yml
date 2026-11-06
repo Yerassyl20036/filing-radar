@@ -65,6 +65,10 @@ jobs:
       TRIAGE_PROVIDER: ${{ vars.TRIAGE_PROVIDER }}
       TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
       TRIAGE_MODEL_DAILY_CAP: ${{ vars.TRIAGE_MODEL_DAILY_CAP }}
+      MODEL_DAILY_BUDGET_USD: ${{ vars.MODEL_DAILY_BUDGET_USD }}
+      ANALYST_DAILY_CAP: ${{ vars.ANALYST_DAILY_CAP }}
+      MODEL_PRICE_IN_PER_M: ${{ vars.MODEL_PRICE_IN_PER_M }}
+      MODEL_PRICE_OUT_PER_M: ${{ vars.MODEL_PRICE_OUT_PER_M }}
       SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
       FRANKFURT_HOST: ${{ vars.FRANKFURT_HOST }}
       WORKER_HOST: ${{ vars.WORKER_HOST }}
@@ -102,7 +106,8 @@ jobs:
         run: |
           echo "WORKER_DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           deploy/deploy.sh ashburn-worker "$WORKER_HOST" IMAGE TUNNEL_IMAGE TAG POSTGRES_PASSWORD FRANKFURT_HOST TEMPORAL_HOST EDGAR_USER_AGENT \
-            'DEEPSEEK_API_KEY?' 'GEMINI_API_KEY?' 'GROQ_API_KEY?' 'ANTHROPIC_API_KEY?' 'TRIAGE_PROVIDER?' 'TRIAGE_MODEL?' 'TRIAGE_MODEL_DAILY_CAP?'
+            'DEEPSEEK_API_KEY?' 'GEMINI_API_KEY?' 'GROQ_API_KEY?' 'ANTHROPIC_API_KEY?' 'TRIAGE_PROVIDER?' 'TRIAGE_MODEL?' 'TRIAGE_MODEL_DAILY_CAP?' \
+            'MODEL_DAILY_BUDGET_USD?' 'ANALYST_DAILY_CAP?' 'MODEL_PRICE_IN_PER_M?' 'MODEL_PRICE_OUT_PER_M?'
 
       # Proves the whole chain without needing public ports: the worker must
       # have reached Postgres and Temporal through both tunnels.

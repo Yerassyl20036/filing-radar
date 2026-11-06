@@ -118,9 +118,26 @@ footer { margin-top: 44px; color: var(--muted); font-size: 13px; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .filing time { grid-area: time; text-align: right; font-size: 13px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .filing time b { display: block; color: var(--text); font-weight: 550; }
+/* The analyst's note, on high 8-Ks only: a headline, then its checked claims on demand. */
+.filing.noted { grid-template-areas: "form who time" "level why time" ". analysis analysis"; }
+.filing.scored.noted { grid-template-areas: "form who time" "level why time" ". model model" ". analysis analysis"; }
+.analysis { grid-area: analysis; min-width: 0; font-size: 13px; }
+.analysis-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.tag { flex: none; padding: 0 6px; border: 1px solid currentColor; border-radius: 6px; color: var(--up); font-size: 12px; font-weight: 600; line-height: 1.5; }
+.headline { flex: 1 1 200px; min-width: 0; font-weight: 550; overflow-wrap: anywhere; }
+.toggle { flex: none; font: inherit; font-size: 12px; padding: 1px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); cursor: pointer; }
+.toggle:hover, .toggle[aria-expanded="true"] { color: var(--text); }
+.claims { margin: 8px 0 2px; padding-left: 20px; display: grid; gap: 10px; }
+.claims[hidden] { display: none; }
+.claims p { margin: 0; overflow-wrap: anywhere; }
+/* The reader asked for the note, so its quotes show in full. */
+.claims .quote { display: block; -webkit-line-clamp: none; line-clamp: none; }
+.claims .src { display: inline-block; margin-top: 2px; font-size: 12px; }
 @media (max-width: 640px) {
   .filing { grid-template-columns: auto 1fr auto; grid-template-areas: "form level time" "who who who" "why why why"; padding: 10px 14px; }
   .filing.scored { grid-template-areas: "form level time" "who who who" "why why why" "model model model"; }
+  .filing.noted { grid-template-areas: "form level time" "who who who" "why why why" "analysis analysis analysis"; }
+  .filing.scored.noted { grid-template-areas: "form level time" "who who who" "why why why" "model model model" "analysis analysis analysis"; }
 }
 .empty { color: var(--muted); text-align: center; padding: 28px 18px; }
 .empty p { margin: 0; }

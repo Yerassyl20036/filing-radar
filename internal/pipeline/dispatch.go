@@ -27,14 +27,33 @@ type Dispatcher struct {
 	Store    Store
 	Temporal Starter
 	Batch    int // filings per run
+	// NoteCap is the most notes per UTC day; 0 turns notes off (no model).
+	NoteCap int
+	// Budget is the daily model budget in US$. Note workflows aren't started
+	// once it is spent; they would only end without a note.
+	Budget float64
+	// Hold is the Activities' hold on model calls. Notes started while it
+	// is active would only end without a note.
+	Hold *Hold
+
+	// running holds the note workflows this dispatcher started whose note
+	// row hasn't landed yet, with when they started. They count against
+	// NoteCap: a running note has no row for NotesToday to count.
+	running map[string]time.Time
 }
+
+// noteRunTimeout is how long a note workflow may run; after it, one that
+// left no row has ended and no longer counts.
+const noteRunTimeout = 2 * time.Hour
 
 // DispatchResult is what one run did.
 type DispatchResult struct {
-	Labelled int // routine forms and re-labels, done on the spot
-	Started  int // workflows started
-	Running  int // already had a workflow
-	Failed   int
+	Labelled     int // routine forms and re-labels, done on the spot
+	Started      int // workflows started
+	Running      int // already had a workflow
+	Failed       int
+	NotesStarted int // note workflows started
+	NotesRunning int // already had a note workflow
 }
 
 // Dispatch runs once. Routine forms (Form 4, 144…) are labelled at once and
@@ -77,10 +96,90 @@ func (d *Dispatcher) Dispatch(ctx context.Context) (DispatchResult, error) {
 			errs = append(errs, fmt.Errorf("%s: %w", u.AccessionNo, err))
 		}
 	}
+
+	notes, err := d.notes(ctx, &res)
+	if err != nil {
+		errs = append(errs, err)
+	}
 	if len(errs) > 0 {
-		return res, fmt.Errorf("%d of %d failed, first: %w", len(errs), len(todo), errs[0])
+		return res, fmt.Errorf("%d of %d failed, first: %w", len(errs), len(todo)+notes, errs[0])
 	}
 	return res, nil
+}
+
+// notes starts a note workflow for each high 8-K without a note, within the
+// day's cap and budget. It returns how many it tried.
+func (d *Dispatcher) notes(ctx context.Context, res *DispatchResult) (int, error) {
+	if d.NoteCap <= 0 {
+		return 0, nil
+	}
+	fail := func(err error) (int, error) {
+		res.Failed++
+		return 1, fmt.Errorf("notes: %w", err)
+	}
+	done, err := d.Store.NotesToday(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	spent, _, err := d.Store.ModelSpendToday(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	if done >= d.NoteCap || spent >= d.Budget || d.Hold.Active() {
+		return 0, nil
+	}
+	if d.running == nil {
+		d.running = map[string]time.Time{}
+	}
+	for acc, at := range d.running {
+		if time.Since(at) > noteRunTimeout {
+			delete(d.running, acc)
+		}
+	}
+	// Ask for enough to see every running one too: new filings come first
+	// and would otherwise push them out of the list.
+	todo, err := d.Store.NotesToWrite(ctx, d.NoteCap-done+len(d.running))
+	if err != nil {
+		return fail(err)
+	}
+	waiting := map[string]bool{}
+	for _, t := range todo {
+		waiting[t.AccessionNo] = true
+	}
+	for acc := range d.running {
+		if !waiting[acc] {
+			delete(d.running, acc) // its row landed, so done counts it
+		}
+	}
+	free := d.NoteCap - done - len(d.running)
+
+	var errs []error
+	tried := 0
+	for _, t := range todo {
+		_, mine := d.running[t.AccessionNo]
+		if !mine && free <= 0 {
+			continue
+		}
+		// One of ours is asked again: if it ended without a row (no answer,
+		// say), this re-runs it in the slot it already holds.
+		tried++
+		started, err := d.startNote(ctx, t)
+		switch {
+		case err != nil:
+			res.Failed++
+			errs = append(errs, fmt.Errorf("note of %s: %w", t.AccessionNo, err))
+			continue
+		case started:
+			res.NotesStarted++
+		default:
+			res.NotesRunning++
+		}
+		if !mine {
+			d.running[t.AccessionNo] = time.Now()
+			free--
+		}
+	}
+	return tried, errors.Join(errs...)
 }
 
 func (d *Dispatcher) relabel(ctx context.Context, u store.Undecided) error {
@@ -111,6 +210,26 @@ func (d *Dispatcher) start(ctx context.Context, u store.Undecided) (bool, error)
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
 		WorkflowRunTimeout:                       2 * time.Hour,
 	}, FilingWorkflow, Filing{AccessionNo: u.AccessionNo, FormType: u.FormType, CIK: u.CIK, Company: u.Company})
+	return startResult(err)
+}
+
+// startNote is start for a note workflow. A finished one leaves a note row,
+// so the dispatcher only gets here when a re-run is the right repair.
+func (d *Dispatcher) startNote(ctx context.Context, t store.NoteTask) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := d.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID:                                       NoteWorkflowID(t.AccessionNo),
+		TaskQueue:                                TaskQueue,
+		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
+		WorkflowRunTimeout:                       2 * time.Hour,
+	}, NoteWorkflow, t)
+	return startResult(err)
+}
+
+func startResult(err error) (bool, error) {
 	var already *serviceerror.WorkflowExecutionAlreadyStarted
 	if errors.As(err, &already) {
 		return false, nil

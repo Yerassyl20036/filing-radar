@@ -23,10 +23,51 @@ type fakeStore struct {
 	labels     map[string]store.Triage
 	undecided  []store.Undecided
 	modelCalls int
+	spent      float64 // spend before any recorded call
+	calls      []store.ModelCall
+	notes      map[string]store.Note
+	toWrite    []store.NoteTask
+	notesToday int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{details: map[string]edgar.Details{}, labels: map[string]store.Triage{}}
+	return &fakeStore{details: map[string]edgar.Details{}, labels: map[string]store.Triage{}, notes: map[string]store.Note{}}
+}
+
+func (s *fakeStore) RecordModelCall(_ context.Context, c store.ModelCall) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, c)
+	return nil
+}
+
+func (s *fakeStore) ModelSpendToday(context.Context) (float64, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	usd := s.spent
+	for _, c := range s.calls {
+		usd += c.CostUSD
+	}
+	return usd, len(s.calls), nil
+}
+
+func (s *fakeStore) SaveNote(_ context.Context, n store.Note) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notes[n.AccessionNo] = n
+	return nil
+}
+
+func (s *fakeStore) NotesToWrite(_ context.Context, limit int) ([]store.NoteTask, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.toWrite[:min(limit, len(s.toWrite))], nil
+}
+
+func (s *fakeStore) NotesToday(context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.notesToday, nil
 }
 
 func (s *fakeStore) Details(_ context.Context, acc string) ([]string, string, bool, error) {
@@ -222,7 +263,9 @@ func modelActs(st *fakeStore, m *fakeModel) *Activities {
 		Docs:     fakeDocs{otherEvents},
 		Store:    st,
 		Model:    m,
+		Provider: "deepseek",
 		DailyCap: 10,
+		Budget:   0.20,
 	}
 }
 
@@ -285,5 +328,68 @@ func TestWorkflowDoesntScoreOtherForms(t *testing.T) {
 	runWorkflow(t, modelActs(st, m), Filing{AccessionNo: acc, FormType: "SCHEDULE 13D/A", CIK: "0000320193"})
 	if m.calls != 0 {
 		t.Errorf("the model was asked about a 13D/A")
+	}
+}
+
+// Every call is recorded with its cost, even when its quote then fails.
+func TestScoreRecordsUsage(t *testing.T) {
+	usage := model.Usage{InputTokens: 4000, OutputTokens: 120, CostUSD: 0.0014}
+	for _, tc := range []struct {
+		name  string
+		quote string
+		ran   bool
+	}{
+		{"checked", "approved the Company's lead drug for sale", true},
+		{"quote not found", "the company was acquired", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			m := &fakeModel{score: model.Score{Score: 85, Reason: "r", Quote: tc.quote, Model: "deepseek-flash", Usage: usage}}
+			res, err := modelActs(st, m).ScoreWithModel(context.Background(), earnings, edgar.Details{Items: []string{"8.01"}, PrimaryDoc: "d.htm"})
+			if err != nil || res.Ran != tc.ran {
+				t.Fatalf("ran %v, err %v", res.Ran, err)
+			}
+			want := []store.ModelCall{{AccessionNo: acc, Purpose: "score", Provider: "deepseek", Model: "deepseek-flash", InputTokens: 4000, OutputTokens: 120, CostUSD: 0.0014}}
+			if !slices.Equal(st.calls, want) {
+				t.Errorf("recorded %+v", st.calls)
+			}
+		})
+	}
+}
+
+func TestScoreRespectsTheBudget(t *testing.T) {
+	st := newFakeStore()
+	st.spent = 0.20
+	m := &fakeModel{}
+	res := runWorkflow(t, modelActs(st, m), earnings)
+	if m.calls != 0 || !slices.Contains(res.Reasons, "not scored: the daily model budget was reached") {
+		t.Errorf("%d model calls, reasons %q", m.calls, res.Reasons)
+	}
+}
+
+// A paid answer that is unusable isn't asked for again: another try would
+// pay again. An account error holds model calls.
+func TestScoreFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		usage model.Usage
+		calls int
+		held  bool
+	}{
+		{"paid, unusable", errors.New("model answer isn't the expected JSON"), model.Usage{InputTokens: 4000, OutputTokens: 120, CostUSD: 0.0014}, 1, false},
+		{"outage", errors.New("deepseek request failed (503)"), model.Usage{}, 3, false},
+		{"no balance", &model.PermanentError{Err: &model.AccountError{Err: errors.New("402")}}, model.Usage{}, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			m := &fakeModel{score: model.Score{Usage: tc.usage}, err: tc.err}
+			acts := modelActs(st, m)
+			acts.Hold = &Hold{}
+			res := runWorkflow(t, acts, earnings)
+			if m.calls != tc.calls || !slices.Contains(res.Reasons, "model unavailable") || acts.Hold.Active() != tc.held {
+				t.Errorf("%d calls, reasons %q, held %v", m.calls, res.Reasons, acts.Hold.Active())
+			}
+		})
 	}
 }

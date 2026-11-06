@@ -52,3 +52,35 @@ CREATE TABLE IF NOT EXISTS triage (
 
 -- The feed can be filtered to a few levels.
 CREATE INDEX IF NOT EXISTS triage_by_level ON triage (level);
+
+-- The analyst note on a high 8-K. A rejected note is kept, with its reason,
+-- so the writer doesn't retry (and pay for) the same filing every cycle.
+CREATE TABLE IF NOT EXISTS notes (
+    accession_no          text        PRIMARY KEY REFERENCES filings (accession_no),
+    status                text        NOT NULL CHECK (status IN ('published', 'rejected')),
+    headline              text        NOT NULL DEFAULT '',
+    claims                jsonb       NOT NULL DEFAULT '[]', -- each claim carries its checked quote
+    previous_accession_no text        NOT NULL DEFAULT '',   -- the 8-K it was compared with; '' if none
+    reason                text        NOT NULL DEFAULT '',
+    model                 text        NOT NULL DEFAULT '',
+    prompt_version        int         NOT NULL DEFAULT 0,
+    created_at            timestamptz NOT NULL DEFAULT now()
+);
+
+-- One row per language model request, with what it cost. The daily budget
+-- sums today's rows. No foreign key on accession_no: a call is a cost record
+-- even if its filing is later removed.
+CREATE TABLE IF NOT EXISTS model_calls (
+    id            bigserial     PRIMARY KEY,
+    accession_no  text          NOT NULL DEFAULT '',
+    purpose       text          NOT NULL,
+    provider      text          NOT NULL DEFAULT '',
+    model         text          NOT NULL DEFAULT '',
+    input_tokens  int           NOT NULL DEFAULT 0,
+    output_tokens int           NOT NULL DEFAULT 0,
+    cost_usd      numeric(12,6) NOT NULL DEFAULT 0,
+    created_at    timestamptz   NOT NULL DEFAULT now()
+);
+
+-- The budget check reads only today's calls.
+CREATE INDEX IF NOT EXISTS model_calls_by_time ON model_calls (created_at);

@@ -30,6 +30,9 @@ type Submissions struct {
 			Form            []string `json:"form"`
 			Items           []string `json:"items"`
 			PrimaryDocument []string `json:"primaryDocument"`
+			// FilingDate is optional: we only read it when it lines up
+			// with the other arrays, so its absence never fails a parse.
+			FilingDate []string `json:"filingDate"`
 		} `json:"recent"`
 	} `json:"filings"`
 }
@@ -45,6 +48,9 @@ func ParseSubmissions(r io.Reader) (Submissions, error) {
 		return Submissions{}, fmt.Errorf("parse company filings: arrays of different lengths (%d accession numbers, %d forms, %d items, %d documents)",
 			n, len(rec.Form), len(rec.Items), len(rec.PrimaryDocument))
 	}
+	if len(rec.FilingDate) != len(rec.AccessionNumber) {
+		s.Filings.Recent.FilingDate = nil
+	}
 	return s, nil
 }
 
@@ -55,29 +61,26 @@ func (s Submissions) Find(accessionNo string) (Details, bool) {
 		if a != accessionNo {
 			continue
 		}
-		d := Details{PrimaryDoc: rec.PrimaryDocument[i]}
-		for _, it := range strings.Split(rec.Items[i], ",") {
-			if it = strings.TrimSpace(it); it != "" {
-				d.Items = append(d.Items, it)
-			}
-		}
-		return d, true
+		return Details{Items: splitItems(rec.Items[i]), PrimaryDoc: rec.PrimaryDocument[i]}, true
 	}
 	return Details{}, false
+}
+
+// splitItems turns SEC's "2.02,9.01" into ["2.02", "9.01"].
+func splitItems(s string) []string {
+	var items []string
+	for _, it := range strings.Split(s, ",") {
+		if it = strings.TrimSpace(it); it != "" {
+			items = append(items, it)
+		}
+	}
+	return items
 }
 
 // Details fetches the company's JSON and finds one filing in it. cik is the
 // 10-digit form the feed gives.
 func (c *Client) Details(ctx context.Context, cik, accessionNo string) (Details, error) {
-	if len(cik) != 10 {
-		return Details{}, fmt.Errorf("CIK %q is not 10 digits", cik)
-	}
-	body, err := c.get(ctx, c.cfg.DataURL+"/submissions/CIK"+cik+".json", "application/json")
-	if err != nil {
-		return Details{}, err
-	}
-	defer body.Close()
-	s, err := ParseSubmissions(io.LimitReader(body, maxBody))
+	s, err := c.Submissions(ctx, cik)
 	if err != nil {
 		return Details{}, err
 	}

@@ -40,5 +40,12 @@ services:
       TRIAGE_PROVIDER: ${TRIAGE_PROVIDER:-}
       TRIAGE_MODEL: ${TRIAGE_MODEL:-}
       TRIAGE_MODEL_DAILY_CAP: ${TRIAGE_MODEL_DAILY_CAP:-200}
+      # Stage 3: the same model writes notes on high 8-Ks. The budget is in
+      # US$ per UTC day and covers scores and notes together; the DeepSeek
+      # balance is prepaid, so it must hold. Prices override the preset's.
+      MODEL_DAILY_BUDGET_USD: ${MODEL_DAILY_BUDGET_USD:-0.20}
+      ANALYST_DAILY_CAP: ${ANALYST_DAILY_CAP:-30}
+      MODEL_PRICE_IN_PER_M: ${MODEL_PRICE_IN_PER_M:-}
+      MODEL_PRICE_OUT_PER_M: ${MODEL_PRICE_OUT_PER_M:-}
     depends_on: [pg-tunnel, temporal-tunnel]
     mem_limit: 128m

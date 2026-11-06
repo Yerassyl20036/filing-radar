@@ -34,6 +34,15 @@ type Score struct {
 	Reason string `json:"reason"`
 	Quote  string `json:"quote"`
 	Model  string `json:"-"` // which model answered (a fallback may stand in)
+	Usage  Usage  `json:"-"`
+}
+
+// Usage is what one call consumed, as the API reported it, and what that
+// cost at the provider's list price.
+type Usage struct {
+	InputTokens  int
+	OutputTokens int
+	CostUSD      float64
 }
 
 // Scorer is what the workflow calls: a real provider, or a fake in tests.
@@ -48,6 +57,34 @@ type PermanentError struct{ Err error }
 
 func (e *PermanentError) Error() string { return e.Err.Error() }
 func (e *PermanentError) Unwrap() error { return e.Err }
+
+// AccountError is a rejection about the account, not the request: no
+// balance left, a bad key, no access. It comes wrapped in a PermanentError,
+// since asking again soon won't help, but once the account is fixed the
+// same request will work, so callers shouldn't give up on the work itself.
+type AccountError struct{ Err error }
+
+func (e *AccountError) Error() string { return e.Err.Error() }
+func (e *AccountError) Unwrap() error { return e.Err }
+
+// Estimator prices a call before it is made, so a daily budget can count
+// calls still in flight. It errs high: about three characters a token, and
+// the most output a call may produce.
+type Estimator interface {
+	Estimate(promptChars int) Usage
+}
+
+// promptOverhead is what a prompt adds around the documents: instructions,
+// the header and, for a repair, the earlier draft.
+const promptOverhead = 8_000
+
+// estimate is the worst case for a prompt of chars characters, capped at
+// what the client would send.
+func estimate(chars, maxChars, maxOutput int, inPerM, outPerM float64) Usage {
+	u := Usage{InputTokens: (min(chars, maxChars)+promptOverhead)/3 + 1, OutputTokens: maxOutput}
+	u.CostUSD = Cost(u, inPerM, outPerM)
+	return u
+}
 
 const system = `You triage SEC filings for a public feed of company news.
 
@@ -91,4 +128,10 @@ func parseAnswer(text, model string) (Score, error) {
 		return Score{}, &PermanentError{errors.New("the model left the reason or quote empty")}
 	}
 	return out, nil
+}
+
+// Cost prices a call at per-million-token list prices. Providers bill by
+// token, so this is the number the daily budget compares against.
+func Cost(u Usage, inPerM, outPerM float64) float64 {
+	return (float64(u.InputTokens)*inPerM + float64(u.OutputTokens)*outPerM) / 1e6
 }

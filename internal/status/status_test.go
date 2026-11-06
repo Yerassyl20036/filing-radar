@@ -61,7 +61,7 @@ func TestBuild(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := states(Build(now, "frankfurt-1", tt.dbErr, 3*time.Millisecond, tt.beats, store.Backlog{}, nil))
+			got := states(Build(now, "frankfurt-1", tt.dbErr, 3*time.Millisecond, tt.beats, store.Backlog{}, nil, Spend{}))
 			for name, want := range tt.want {
 				if got[name] != want {
 					t.Errorf("%s = %q, want %q", name, got[name], want)
@@ -101,7 +101,7 @@ func TestBuildIngestor(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := named(Build(now, "frankfurt-1", nil, time.Millisecond, tt.beats, store.Backlog{}, nil), "Ingestor")
+			got := named(Build(now, "frankfurt-1", nil, time.Millisecond, tt.beats, store.Backlog{}, nil, Spend{}), "Ingestor")
 			if got.Name != "Ingestor" || got.State != tt.want || got.Note != tt.wantNote {
 				t.Errorf("got %s %s %q, want %s %q", got.Name, got.State, got.Note, tt.want, tt.wantNote)
 			}
@@ -134,10 +134,37 @@ func TestBuildTriage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			comps := Build(now, "frankfurt-1", tt.dbErr, time.Millisecond, nil, tt.backlog, tt.backlogErr)
-			got := comps[len(comps)-1] // the status page lists triage last, after the ingestor
+			comps := Build(now, "frankfurt-1", tt.dbErr, time.Millisecond, nil, tt.backlog, tt.backlogErr, Spend{})
+			got := named(comps, "Triage")
 			if got.Name != "Triage" || got.Server != "ashburn-1" || got.State != tt.want || got.Note != tt.wantNote {
 				t.Errorf("got %s on %s %s %q, want Triage on ashburn-1 %s %q", got.Name, got.Server, got.State, got.Note, tt.want, tt.wantNote)
+			}
+		})
+	}
+}
+
+func TestBuildModels(t *testing.T) {
+	now := time.Date(2026, 11, 6, 16, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		dbErr    error
+		spend    Spend
+		want     State
+		wantNote string
+	}{
+		{"nothing yet", nil, Spend{}, Up, "0 calls today, $0.0000"},
+		{"one call", nil, Spend{USD: 0.0004, Calls: 1}, Up, "1 call today, $0.0004"},
+		{"a normal day", nil, Spend{USD: 0.02134, Calls: 12}, Up, "12 calls today, $0.0213"},
+		{"over a dollar", nil, Spend{USD: 1.256, Calls: 900}, Up, "900 calls today, $1.26"},
+		{"spend query failed", nil, Spend{Err: errors.New("timeout")}, Stale, "spend unavailable"},
+		{"database down", errors.New("refused"), Spend{}, Stale, "spend unavailable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			comps := Build(now, "frankfurt-1", tt.dbErr, time.Millisecond, nil, store.Backlog{}, nil, tt.spend)
+			got := comps[len(comps)-1] // the status page lists the models last, after triage
+			if got.Name != "Models" || got.Server != "ashburn-1" || got.State != tt.want || got.Note != tt.wantNote {
+				t.Errorf("got %s on %s %s %q, want Models on ashburn-1 %s %q", got.Name, got.Server, got.State, got.Note, tt.want, tt.wantNote)
 			}
 		})
 	}

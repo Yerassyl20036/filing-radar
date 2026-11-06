@@ -105,15 +105,15 @@
   <p>
     Raw first, analysis later. A filing shows up in the feed within a minute, straight from EDGAR. Each tracked filing then
     gets one Temporal workflow, with the accession number as the workflow ID, so no filing is ever analysed twice.
-    The workflow writes its label, and for an 8-K the model's score, to a <code>triage</code> table now, and notes later, under the same accession number,
-    and the feed shows them on the filing's row once they land. Temporal never serves visitors: the website reads only Postgres,
+    The workflow writes its label, and for an 8-K the model's score, to a <code>triage</code> table; a high 8-K then gets a note in a <code>notes</code> table,
+    under the same accession number, and the feed shows both on the filing's row once they land. Temporal never serves visitors: the website reads only Postgres,
     so if Temporal is down, the feed still works.
   </p>
   <div class="card">
     <div class="arch-wrap">
     <svg class="arch" viewBox="0 0 720 560" role="img" aria-labelledby="flow-title flow-desc">
       <title id="flow-title">Where the results go</title>
-      <desc id="flow-desc">The poller stores raw filings in Postgres and starts one Temporal workflow per tracked filing. The workflow runs triage now, plain rules for every filing and a language model for 8-Ks, and in stages 3 and 4 the analyst agent and next-day scoring, and writes the results to tables in the same Postgres, keyed by accession number. The website reads them together and shows them to visitors.</desc>
+      <desc id="flow-desc">The poller stores raw filings in Postgres and starts one Temporal workflow per tracked filing. The workflow runs triage, plain rules for every filing and a language model for 8-Ks, then the analyst agent for high 8-Ks, and in stage 4 next-day scoring, and writes the results to tables in the same Postgres, keyed by accession number. The website reads them together and shows them to visitors.</desc>
       <defs>
         <marker id="head2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M1 1 L9 5 L1 9 z" style="fill: var(--muted)"/>
@@ -132,9 +132,9 @@
       <rect class="node live" x="350" y="136" width="310" height="40" rx="8"/>
       <text x="366" y="161">Triage</text>
       <text class="sub" x="644" y="161" text-anchor="end">rules + model · stage 2</text>
-      <rect class="node next" x="350" y="192" width="310" height="40" rx="8"/>
+      <rect class="node live" x="350" y="192" width="310" height="40" rx="8"/>
       <text x="366" y="217">Analyst agent</text>
-      <text class="sub" x="644" y="217" text-anchor="end">with citations · stage 3</text>
+      <text class="sub" x="644" y="217" text-anchor="end">notes · stage 3</text>
       <rect class="node next" x="350" y="248" width="310" height="40" rx="8"/>
       <text x="366" y="273">Score next day</text>
       <text class="sub" x="644" y="273" text-anchor="end">next close · stage 4</text>
@@ -146,11 +146,11 @@
       <text class="sub" x="170" y="399" text-anchor="middle">raw, within a minute</text>
       <rect class="node live" x="400" y="356" width="280" height="56" rx="8"/>
       <text x="540" y="379" text-anchor="middle">triage, notes</text>
-      <text class="sub" x="540" y="399" text-anchor="middle">triage now, notes next</text>
+      <text class="sub" x="540" y="399" text-anchor="middle">labels, scores and notes</text>
 
       <rect class="node live" x="200" y="486" width="320" height="56" rx="8"/>
       <text x="360" y="509" text-anchor="middle">Website</text>
-      <text class="sub" x="360" y="529" text-anchor="middle">filings joined with triage</text>
+      <text class="sub" x="360" y="529" text-anchor="middle">filings joined with triage and notes</text>
       <rect class="ext" x="560" y="492" width="140" height="44" rx="8"/>
       <text x="630" y="519" text-anchor="middle">Visitors</text>
 
@@ -166,7 +166,7 @@
     </div>
     <div class="legend">
       <span>Solid outline: live now</span>
-      <span><span style="color:var(--stale)">Amber dashes</span>: stages 3 and 4, coming next</span>
+      <span><span style="color:var(--stale)">Amber dashes</span>: stage 4, coming next</span>
       <span>Grey dashes: outside the system</span>
     </div>
   </div>
@@ -175,12 +175,79 @@
   <ol class="steps">
     <li><span class="n">1</span><div><b>Fetch.</b><p>Every minute the worker reads EDGAR's latest-filings feed, pages back until it reaches filings it already has, and stores each new one once, keyed by its accession number.</p></div><span class="pill live">stage 1, live</span></li>
     <li><span class="n">2</span><div><b>Triage.</b><p>Plain rules read the 8-K item numbers (4.02 restatement, 2.02 earnings, 5.02 an executive leaving…) and label every filing high, medium, low or routine. Then a language model (DeepSeek by default, Claude as an option) reads each 8-K and scores it from 0 to 100, with a one-sentence reason and a quote. The quote must appear word for word in the filing, or the score is dropped. The model can raise a label, never lower it, and a daily cap bounds the cost.</p></div><span class="pill live">stage 2, live</span></li>
-    <li><span class="n">3</span><div><b>Analyst agent.</b><p>For material filings: compare with the company's previous filing and write a short note on what changed.</p></div><span class="pill">stage 3</span></li>
-    <li><span class="n">4</span><div><b>Check.</b><p>Every claim must cite a passage that really exists in the filing, or the note isn't published. Stage 2 already checks the model's one quote; stage 3 extends that to every claim in a note.</p></div><span class="pill">stage 3</span></li>
-    <li><span class="n">5</span><div><b>Publish.</b><p>The note appears in the feed with links to the original filing on sec.gov.</p></div><span class="pill">stages 1–3</span></li>
+    <li><span class="n">3</span><div><b>Analyst agent.</b><p>For each high-importance 8-K: compare it with the company's previous comparable 8-K and write a headline and 2 to 5 claims on what changed, each quoting the document it comes from.</p></div><span class="pill live">stage 3, live</span></li>
+    <li><span class="n">4</span><div><b>Check.</b><p>Code, not the model, checks that every quote appears word for word in its source. Claims that fail get one repair; if they fail again they're dropped. With fewer than 2 checked claims left, the note is not published.</p></div><span class="pill live">stage 3, live</span></li>
+    <li><span class="n">5</span><div><b>Publish.</b><p>The note appears in the feed with links to the original filing on sec.gov.</p></div><span class="pill live">stages 1–3, live</span></li>
     <li><span class="n">6</span><div><b>Score.</b><p>A Temporal workflow waits until after the next market close, fetches the price move, and checks the prediction. Scores are public.</p></div><span class="pill">stage 4</span></li>
   </ol>
-  <p class="muted" style="font-size:14px">Live today: stage 0 (the three servers, the deploy pipeline, the tunnels, the health checks), stage 1, <a href="/">the filing feed</a>, and stage 2, the rules and the model that label it. Stages 3 and 4 come next.</p>
+  <p class="muted" style="font-size:14px">Live today: stage 0 (the three servers, the deploy pipeline, the tunnels, the health checks), stage 1, <a href="/">the filing feed</a>, stage 2, the rules and the model that label it, and stage 3, the notes on high 8-Ks. Stage 4 comes next.</p>
+
+  <h2>How a note is written</h2>
+  <p>
+    The dispatcher finds high 8-Ks without a note and starts one workflow for each, with the workflow ID <code>NOTE-</code> and the accession number,
+    so a filing never gets two notes. The steps are fixed: the model drafts, code checks, and the model gets one chance to repair what failed.
+    A note that keeps fewer than 2 checked claims is saved as rejected, with its reason, and never shown.
+  </p>
+  <div class="card">
+    <div class="arch-wrap">
+    <svg class="arch" viewBox="0 0 720 480" role="img" aria-labelledby="note-title note-desc">
+      <title id="note-title">How a note is written</title>
+      <desc id="note-desc">The dispatcher starts one Temporal workflow per high 8-K that has no note yet. The workflow gathers this 8-K, its Exhibit 99.1 and the company's previous comparable 8-K, has the model draft a headline and claims with quotes, and then code checks every quote against its source. Claims that fail go back to the model for one repair and are checked again. A note with 2 or more checked claims is published; otherwise it is kept as rejected, with its reason.</desc>
+      <defs>
+        <marker id="head3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M1 1 L9 5 L1 9 z" style="fill: var(--muted)"/>
+        </marker>
+      </defs>
+
+      <rect class="node live" x="40" y="16" width="260" height="56" rx="8"/>
+      <text x="170" y="39" text-anchor="middle">Dispatcher</text>
+      <text class="sub" x="170" y="59" text-anchor="middle">high 8-K, no note yet</text>
+
+      <rect class="server" x="20" y="100" width="680" height="364" rx="14"/>
+      <text class="label" x="36" y="124">TEMPORAL WORKFLOW · NOTE-ACCESSION</text>
+
+      <rect class="node live" x="40" y="144" width="260" height="72" rx="8"/>
+      <text x="170" y="167" text-anchor="middle">Gather context</text>
+      <text class="sub" x="170" y="187" text-anchor="middle">this 8-K and Exhibit 99.1</text>
+      <text class="sub" x="170" y="205" text-anchor="middle">the previous comparable 8-K</text>
+
+      <rect class="node live" x="400" y="144" width="280" height="72" rx="8"/>
+      <text x="540" y="174" text-anchor="middle">Draft note</text>
+      <text class="sub" x="540" y="194" text-anchor="middle">headline, claims with quotes</text>
+
+      <rect class="node live" x="40" y="256" width="260" height="56" rx="8"/>
+      <text x="170" y="279" text-anchor="middle">Repair (once)</text>
+      <text class="sub" x="170" y="299" text-anchor="middle">still failing: dropped</text>
+
+      <rect class="node live" x="400" y="256" width="280" height="56" rx="8"/>
+      <text x="540" y="279" text-anchor="middle">Check every quote</text>
+      <text class="sub" x="540" y="299" text-anchor="middle">code, not the model</text>
+
+      <rect class="node live" x="40" y="388" width="260" height="56" rx="8"/>
+      <text x="170" y="411" text-anchor="middle">Rejected</text>
+      <text class="sub" x="170" y="431" text-anchor="middle">kept with its reason, not shown</text>
+
+      <rect class="node live" x="400" y="388" width="280" height="56" rx="8"/>
+      <text x="540" y="411" text-anchor="middle">Published</text>
+      <text class="sub" x="540" y="431" text-anchor="middle">2+ checked claims, in the feed</text>
+
+      <line class="link" x1="170" y1="72" x2="170" y2="141" marker-end="url(#head3)"/>
+      <line class="link" x1="300" y1="180" x2="397" y2="180" marker-end="url(#head3)"/>
+      <line class="link" x1="540" y1="216" x2="540" y2="253" marker-end="url(#head3)"/>
+      <line class="link" x1="400" y1="272" x2="303" y2="272" marker-end="url(#head3)"/>
+      <text class="sub" x="350" y="264" text-anchor="middle">failed</text>
+      <line class="link" x1="300" y1="296" x2="397" y2="296" marker-end="url(#head3)"/>
+      <text class="sub" x="350" y="314" text-anchor="middle">recheck</text>
+      <line class="link" x1="600" y1="312" x2="600" y2="385" marker-end="url(#head3)"/>
+      <path class="link" d="M460 312 V350 H170 V385" marker-end="url(#head3)"/>
+      <text class="sub" x="315" y="343" text-anchor="middle">fewer than 2 checked claims</text>
+    </svg>
+    </div>
+    <div class="legend">
+      <span>The model writes; code checks every quote against the filing's text</span>
+      <span>One workflow per filing, so a note is written at most once</span>
+    </div>
+  </div>
 
   <h2>Data sources</h2>
   <ul class="decisions">
@@ -198,6 +265,9 @@
     <li>The model can raise a label, never lower it. <span>A restatement stays high even if the model shrugs; the model's job is to catch what rules can't read, like big news filed under 8.01 Other events.</span></li>
     <li>Every score carries a quote that's checked. <span>The quote must appear word for word in the filing, or the score is dropped. It's the first piece of stage 3's rule that every claim is cited and verified.</span></li>
     <li>Every claim is checked before it's published. <span>A note whose citation doesn't match the filing's text is retried or dropped.</span></li>
+    <li>A workflow, not a free-roaming agent. <span>The note's steps are fixed: gather, draft, check, repair once. The model never decides what to fetch or when it's done, so a note's cost and running time have a ceiling, and every step is visible in Temporal.</span></li>
+    <li>One repair, then drop. <span>A failed quote goes back to the model once, with what didn't match. A second failure means the claim isn't in the source, so it's dropped rather than retried until it happens to pass.</span></li>
+    <li>A daily dollar budget. <span>Every model call is recorded with its tokens and cost. When the day's budget is spent, calls stop until midnight UTC and the rules' labels stand; the status page shows today's spend.</span></li>
     <li>Store a filing only after paging stops. <span>EDGAR lists a filing once per party, and a Form 4's two entries can land on two pages. Storing page by page would mistake the second half for "already stored", stop paging early and skip filings.</span></li>
     <li>Temporal for waiting, not for everything. <span>The one-minute poll is safe to repeat and needs no workflow engine; the next-day score has to survive restarts, so it gets one.</span></li>
     <li>One Temporal workflow per tracked filing. <span>The workflow ID is the accession number, so Temporal refuses a second start; a dispatcher retries anything without a label every minute. Form 4s and other routine forms are labelled on the spot and never start one.</span></li>
@@ -234,7 +304,7 @@ deploy/           <span class="c">one folder per server, the tunnel image, a loc
         for (const id of dotFor[c.name] || []) document.getElementById(id).setAttribute('class', 'state ' + c.state);
       }
       const up = components.filter(c => c.state === 'up').length;
-      const notes = components.filter(c => ['Temporal', 'Ingestor', 'Triage'].includes(c.name)).map(c => c.name + ': ' + c.note);
+      const notes = components.filter(c => ['Temporal', 'Ingestor', 'Triage', 'Models'].includes(c.name)).map(c => c.name + ': ' + c.note);
       live.textContent = `Live now: ${up} of ${components.length} parts up · ${notes.join(' · ')}`;
     } catch {
       live.textContent = "Live status isn't answering right now.";

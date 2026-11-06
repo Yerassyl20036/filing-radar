@@ -115,6 +115,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		beats      []store.Heartbeat
 		backlog    store.Backlog
 		backlogErr error
+		spend      status.Spend
 	)
 	if dbErr == nil {
 		var err error
@@ -124,13 +125,16 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		if backlog, backlogErr = s.store.TriageBacklog(ctx); backlogErr != nil {
 			slog.Error("read triage backlog", "err", backlogErr)
 		}
+		if spend.USD, spend.Calls, spend.Err = s.store.ModelSpendToday(ctx); spend.Err != nil {
+			slog.Error("read model spend", "err", spend.Err)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"checked_at": time.Now().UTC(),
-		"components": status.Build(time.Now(), s.name, dbErr, latency, beats, backlog, backlogErr),
+		"components": status.Build(time.Now(), s.name, dbErr, latency, beats, backlog, backlogErr, spend),
 	})
 }
 

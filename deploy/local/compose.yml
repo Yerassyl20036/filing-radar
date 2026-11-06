@@ -5,7 +5,7 @@
 # the status page says the ingestor is waiting for it. To try the model step,
 # put DEEPSEEK_API_KEY=... (or ANTHROPIC_API_KEY=...) in deploy/local/.env
 # (git ignores it); compose reads it from there. Locally the model is capped
-# at 20 calls a day.
+# at 20 scores, 5 notes and US$0.05 a day.
 name: radar-local
 
 services:
@@ -54,6 +54,10 @@ services:
       TRIAGE_PROVIDER: ${TRIAGE_PROVIDER:-}
       TRIAGE_MODEL: ${TRIAGE_MODEL:-}
       TRIAGE_MODEL_DAILY_CAP: ${TRIAGE_MODEL_DAILY_CAP:-20}
+      MODEL_DAILY_BUDGET_USD: ${MODEL_DAILY_BUDGET_USD:-0.05}
+      ANALYST_DAILY_CAP: ${ANALYST_DAILY_CAP:-5}
+      MODEL_PRICE_IN_PER_M: ${MODEL_PRICE_IN_PER_M:-}
+      MODEL_PRICE_OUT_PER_M: ${MODEL_PRICE_OUT_PER_M:-}
     depends_on:
       postgres:
         condition: service_healthy

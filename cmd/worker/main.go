@@ -9,12 +9,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
+	_ "time/tzdata" // notes date filings in New York time; the image may lack zone files
 
 	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
@@ -62,18 +64,28 @@ func main() {
 		UserAgent: os.Getenv("EDGAR_USER_AGENT"),
 		MinGap:    time.Second,
 	})
-	acts := &pipeline.Activities{Store: st, DailyCap: envInt("TRIAGE_MODEL_DAILY_CAP", 200)}
+	acts := &pipeline.Activities{
+		Store:    st,
+		BaseURL:  env("EDGAR_BASE_URL", edgar.DefaultBaseURL),
+		DailyCap: envInt("TRIAGE_MODEL_DAILY_CAP", 200),
+		Budget:   envFloat("MODEL_DAILY_BUDGET_USD", 0.20),
+		Hold:     &pipeline.Hold{},
+	}
 	if secErr == nil {
 		// Only when set: a nil *Client inside an interface wouldn't be nil.
-		acts.SEC, acts.Docs = sec, sec
+		acts.SEC, acts.Docs, acts.Archive = sec, sec, sec
 	}
+	noteCap := envInt("ANALYST_DAILY_CAP", 30)
 	// Without a key the rules label everything on their own, which is how
-	// stage 2a ran. Keys never leave the worker's environment.
-	if scorer, provider := chooseModel(); scorer != nil {
-		acts.Model = scorer
-		slog.Info("model scoring on", "provider", provider, "model", os.Getenv("TRIAGE_MODEL"), "daily_cap", acts.DailyCap)
+	// stage 2a ran, and no notes are written. Keys never leave the worker's
+	// environment.
+	if m, provider := chooseModel(); m != nil {
+		acts.Model, acts.Writer, acts.Provider = m, m, provider
+		slog.Info("model on", "provider", provider, "model", os.Getenv("TRIAGE_MODEL"), "daily_cap", acts.DailyCap,
+			"budget_usd", acts.Budget, "analyst_daily_cap", noteCap)
 	} else {
-		slog.Info("model scoring off: no model API key is set")
+		noteCap = 0
+		slog.Info("model off: no model API key is set")
 	}
 
 	w := worker.New(c, ping.TaskQueue, worker.Options{
@@ -84,6 +96,7 @@ func main() {
 	w.RegisterWorkflow(ping.Workflow)
 	w.RegisterActivity(ping.Activity)
 	w.RegisterWorkflow(pipeline.FilingWorkflow)
+	w.RegisterWorkflow(pipeline.NoteWorkflow)
 	w.RegisterActivity(acts)
 	if err := w.Start(); err != nil {
 		fatal("start temporal worker", err)
@@ -97,7 +110,7 @@ func main() {
 	// The ingestor runs beside the health reports. Polling is short and safe
 	// to repeat, and its state lives in the filings table, so a plain loop is
 	// enough. Temporal is for the multi-step work per filing.
-	dispatcher := &pipeline.Dispatcher{Store: st, Temporal: c, Batch: 200}
+	dispatcher := &pipeline.Dispatcher{Store: st, Temporal: c, Batch: 200, NoteCap: noteCap, Budget: acts.Budget, Hold: acts.Hold}
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	wg.Go(func() { runIngestor(ctx, st, host, sec, secErr, dispatcher) })
@@ -170,9 +183,11 @@ func runIngestor(ctx context.Context, st *store.Store, host string, src *edgar.C
 		dr, err := dispatcher.Dispatch(dctx)
 		switch {
 		case err != nil && ctx.Err() == nil:
-			slog.Warn("dispatch", "labelled", dr.Labelled, "started", dr.Started, "running", dr.Running, "failed", dr.Failed, "err", err)
+			slog.Warn("dispatch", "labelled", dr.Labelled, "started", dr.Started, "running", dr.Running,
+				"notes_started", dr.NotesStarted, "notes_running", dr.NotesRunning, "failed", dr.Failed, "err", err)
 		case dr != (pipeline.DispatchResult{}):
-			slog.Info("dispatch", "labelled", dr.Labelled, "started", dr.Started, "running", dr.Running)
+			slog.Info("dispatch", "labelled", dr.Labelled, "started", dr.Started, "running", dr.Running,
+				"notes_started", dr.NotesStarted, "notes_running", dr.NotesRunning)
 		}
 	})
 }
@@ -220,10 +235,12 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-// chooseModel picks the 8-K scorer. TRIAGE_PROVIDER names it (deepseek,
-// gemini, groq or anthropic); left empty, the first provider with a key set
-// wins, in that order. TRIAGE_MODEL overrides the provider's default model.
-func chooseModel() (model.Scorer, string) {
+// chooseModel picks the model that scores 8-Ks and writes notes.
+// TRIAGE_PROVIDER names it (deepseek, gemini, groq or anthropic); left empty,
+// the first provider with a key set wins, in that order. TRIAGE_MODEL
+// overrides the provider's default model, and MODEL_PRICE_IN_PER_M with
+// MODEL_PRICE_OUT_PER_M its list prices, for when a provider changes them.
+func chooseModel() (pipeline.Model, string) {
 	keys := map[string]string{
 		"deepseek":  os.Getenv("DEEPSEEK_API_KEY"),
 		"gemini":    os.Getenv("GEMINI_API_KEY"),
@@ -250,10 +267,35 @@ func chooseModel() (model.Scorer, string) {
 		fatal("bad configuration", errors.New("TRIAGE_PROVIDER is "+provider+" but its API key is not set"))
 	}
 	name := os.Getenv("TRIAGE_MODEL")
-	if provider == "anthropic" {
-		return model.NewClaude(key, name), provider
+	var m interface {
+		pipeline.Model
+		SetPrices(inPerM, outPerM float64)
 	}
-	return model.NewOpenAICompatible(model.Presets[provider], key, name, os.Getenv("TRIAGE_BASE_URL")), provider
+	if provider == "anthropic" {
+		m = model.NewClaude(key, name)
+	} else {
+		m = model.NewOpenAICompatible(model.Presets[provider], key, name, os.Getenv("TRIAGE_BASE_URL"))
+	}
+	in, out := os.Getenv("MODEL_PRICE_IN_PER_M"), os.Getenv("MODEL_PRICE_OUT_PER_M")
+	switch {
+	case in != "" && out != "":
+		m.SetPrices(envFloat("MODEL_PRICE_IN_PER_M", 0), envFloat("MODEL_PRICE_OUT_PER_M", 0))
+	case in != "" || out != "":
+		fatal("bad configuration", errors.New("set both MODEL_PRICE_IN_PER_M and MODEL_PRICE_OUT_PER_M, or neither"))
+	}
+	return m, provider
+}
+
+func envFloat(key string, fallback float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+		fatal("bad configuration", errors.New(key+" must be a number, 0 or more"))
+	}
+	return f
 }
 
 func envInt(key string, fallback int) int {

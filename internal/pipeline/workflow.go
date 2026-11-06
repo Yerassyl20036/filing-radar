@@ -1,15 +1,19 @@
 // Package pipeline runs the per-filing work in Temporal. Stage 2: fetch the
 // filing's details from SEC, have a model score 8-Ks, label the filing with
 // the rules (raised by the model's score when it checks out), save the label.
-// Later stages add steps to the same workflow: the analyst's note (3), and a
-// day's wait before checking the prediction (4).
+// Stage 3's analyst note has its own workflow (note.go), started once the
+// filing is labelled high. Stage 4 adds a day's wait before checking the
+// prediction.
 package pipeline
 
 import (
 	"context"
 	"errors"
+	"net"
+	"sync"
 	"time"
 
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -62,12 +66,14 @@ func FilingWorkflow(ctx workflow.Context, f Filing) (triage.Result, error) {
 	var m ModelResult
 	if found && d.PrimaryDoc != "" && isEightK(f.FormType) {
 		score := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-			StartToCloseTimeout: 3 * time.Minute, // the document fetch queues for SEC, then the model thinks
+			// The document fetch queues for SEC, then one model call of at
+			// most two minutes. Only calls that weren't billed are retried.
+			StartToCloseTimeout: 4 * time.Minute,
 			RetryPolicy: &temporal.RetryPolicy{
 				InitialInterval:        30 * time.Second,
 				BackoffCoefficient:     2,
 				MaximumAttempts:        3,
-				NonRetryableErrorTypes: []string{errModelRefused},
+				NonRetryableErrorTypes: []string{errModelRefused, errModelAccount, errModelBilled},
 			},
 		})
 		if err := workflow.ExecuteActivity(score, a.ScoreWithModel, f, d).Get(ctx, &m); err != nil {
@@ -102,6 +108,8 @@ const (
 	errNotFound     = "NotFound"     // SEC has no JSON for this company
 	errNoAgent      = "NoAgent"      // EDGAR_USER_AGENT isn't set, so we may not ask
 	errModelRefused = "ModelRefused" // the API rejected the request or the model declined
+	errModelAccount = "ModelAccount" // no balance, a bad key: no call works until someone fixes it
+	errModelBilled  = "ModelBilled"  // the call was paid for but its answer is unusable; another try would pay again
 )
 
 // Source is where details come from: edgar.Client, or a fake in tests.
@@ -121,15 +129,188 @@ type Store interface {
 	SaveTriage(ctx context.Context, t store.Triage) error
 	Undecided(ctx context.Context, rulesVersion, limit int) ([]store.Undecided, error)
 	ModelCallsToday(ctx context.Context) (int, error)
+	RecordModelCall(ctx context.Context, c store.ModelCall) error
+	ModelSpendToday(ctx context.Context) (usd float64, calls int, err error)
+	SaveNote(ctx context.Context, n store.Note) error
+	NotesToWrite(ctx context.Context, limit int) ([]store.NoteTask, error)
+	NotesToday(ctx context.Context) (int, error)
 }
 
-// Activities are the workflow's steps that talk to the outside world.
+// Model is what one provider client does: score 8-Ks and draft notes.
+type Model interface {
+	model.Scorer
+	model.Writer
+}
+
+// Activities are the workflows' steps that talk to the outside world.
 type Activities struct {
 	SEC      Source // nil when EDGAR_USER_AGENT isn't set
 	Docs     Documents
+	Archive  Archive // the note's documents; nil when EDGAR_USER_AGENT isn't set
+	BaseURL  string  // sec.gov, for the links in notes; empty means edgar.DefaultBaseURL
 	Store    Store
-	Model    model.Scorer // nil when ANTHROPIC_API_KEY isn't set: rules only
-	DailyCap int          // most model calls per UTC day
+	Model    model.Scorer // nil when no model API key is set: rules only
+	Writer   model.Writer // nil when no model API key is set: no notes
+	Provider string       // as recorded with each call: "deepseek", "anthropic"...
+	DailyCap int          // most model scores per UTC day
+	// Budget is the most the models may cost per UTC day, in US$. The
+	// balance is prepaid with no top-up, so it is checked before every call.
+	Budget float64
+	// Hold pauses model calls after an account error; shared with the
+	// Dispatcher. Nil means calls are never held.
+	Hold *Hold
+
+	mu sync.Mutex
+	// inFlight is the worst-case cost of calls running now. Up to eight
+	// activities run at once, and without it all of them could pass the
+	// same budget check.
+	inFlight float64
+}
+
+// Hold pauses model calls for a while after the provider refused the
+// account (no balance, a bad key): every call would fail until someone
+// tops up or fixes the key. It is its own type because Temporal registers
+// every exported method of Activities as an activity.
+type Hold struct {
+	mu    sync.Mutex
+	until time.Time
+}
+
+// accountHold is how long model calls pause after an account error.
+const accountHold = time.Hour
+
+// Active reports whether calls are paused now. A nil Hold never is.
+func (h *Hold) Active() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return time.Now().Before(h.until)
+}
+
+func (h *Hold) start(d time.Duration) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.until = time.Now().Add(d)
+}
+
+// overBudget reports whether today's model spend, with calls in flight, has
+// reached the budget. It is a cheap early check; reserve is the real one.
+func (a *Activities) overBudget(ctx context.Context) (bool, error) {
+	spent, _, err := a.Store.ModelSpendToday(ctx)
+	if err != nil {
+		return false, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return spent+a.inFlight >= a.Budget, nil
+}
+
+// reserve holds a call's worst-case cost against today's budget until
+// release is called, after the real cost is recorded. ok is false when the
+// budget, counting calls in flight, has no room for this one.
+func (a *Activities) reserve(ctx context.Context, est float64) (release func(), ok bool, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	spent, _, err := a.Store.ModelSpendToday(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if total := spent + a.inFlight; total >= a.Budget || total+est > a.Budget {
+		return nil, false, nil
+	}
+	a.inFlight += est
+	return func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.inFlight -= est
+	}, true, nil
+}
+
+// callOutcome is how a model call went, for the activity to report.
+type callOutcome int
+
+const (
+	callSkipped callOutcome = iota // held or no budget: nothing was sent
+	callMade
+)
+
+// callModel makes one paid call within the budget and records what it
+// cost. billed is true when the provider charged, or may have: a call cut
+// off by a timeout is counted at its estimate, so the budget errs safe.
+func (a *Activities) callModel(ctx context.Context, impl any, promptChars int, accessionNo, purpose string,
+	call func() (modelName string, u model.Usage, err error)) (out callOutcome, billed bool, err error) {
+	if a.Hold.Active() {
+		return callSkipped, false, nil
+	}
+	var est model.Usage
+	if e, ok := impl.(model.Estimator); ok {
+		est = e.Estimate(promptChars)
+	}
+	release, ok, err := a.reserve(ctx, est.CostUSD)
+	if err != nil || !ok {
+		return callSkipped, false, err
+	}
+	defer release()
+
+	name, u, err := call()
+	billed = u.InputTokens > 0 || u.OutputTokens > 0
+	if err != nil && !billed && cutOff(err) {
+		name, u, billed = "(cut off; cost estimated)", est, true
+	}
+	if billed || err == nil {
+		a.record(ctx, accessionNo, purpose, name, u)
+	}
+	var acct *model.AccountError
+	if errors.As(err, &acct) {
+		a.Hold.start(accountHold)
+	}
+	return callMade, billed, err
+}
+
+// cutOff reports whether a call failed after it may have reached the
+// provider: a timeout or a cancel while waiting for the answer.
+func cutOff(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		(errors.As(err, &ne) && ne.Timeout())
+}
+
+// record stores what a call cost. It uses its own short context, so an
+// activity cut off by its timeout still records the call it paid for. A
+// failure to record is logged, not returned: retrying would pay again.
+func (a *Activities) record(ctx context.Context, accessionNo, purpose, modelName string, u model.Usage) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	c := store.ModelCall{
+		AccessionNo: accessionNo, Purpose: purpose, Provider: a.Provider, Model: modelName,
+		InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, CostUSD: u.CostUSD,
+	}
+	if rerr := a.Store.RecordModelCall(rctx, c); rerr != nil {
+		activity.GetLogger(ctx).Warn("model call not recorded; today's spend is undercounted", "accession", accessionNo, "purpose", purpose, "err", rerr)
+	}
+}
+
+// modelErr tells Temporal which model failures not to retry: a paid call
+// (asking again pays again), an account problem, a permanent refusal.
+func modelErr(err error, billed bool) error {
+	var acct *model.AccountError
+	var perm *model.PermanentError
+	switch {
+	case err == nil:
+		return nil
+	case billed:
+		return temporal.NewNonRetryableApplicationError(err.Error(), errModelBilled, err)
+	case errors.As(err, &acct):
+		return temporal.NewNonRetryableApplicationError(err.Error(), errModelAccount, err)
+	case errors.As(err, &perm):
+		return temporal.NewNonRetryableApplicationError(err.Error(), errModelRefused, err)
+	}
+	return err
 }
 
 // ModelResult is what the model step decided. Ran is false when the model
@@ -186,6 +367,17 @@ func (a *Activities) ScoreWithModel(ctx context.Context, f Filing, d edgar.Detai
 	if n >= a.DailyCap {
 		return ModelResult{Note: "not scored: the daily model limit was reached"}, nil
 	}
+	budgetNote := ModelResult{Note: "not scored: the daily model budget was reached"}
+	if a.Hold.Active() {
+		return ModelResult{Note: "not scored: the model account needs attention"}, nil
+	}
+	// Checked again, with a reservation, once the document's size is known;
+	// this one spares SEC a fetch when the budget is already gone.
+	if over, err := a.overBudget(ctx); err != nil {
+		return ModelResult{}, err
+	} else if over {
+		return budgetNote, nil
+	}
 
 	text, err := a.Docs.Document(ctx, f.CIK, f.AccessionNo, d.PrimaryDoc)
 	var se *edgar.StatusError
@@ -200,13 +392,20 @@ func (a *Activities) ScoreWithModel(ctx context.Context, f Filing, d edgar.Detai
 	if company == "" {
 		company = "(unknown)"
 	}
-	s, err := a.Model.Score(ctx, model.Input{Company: company, FormType: f.FormType, Items: d.Items, Text: text})
-	var perm *model.PermanentError
-	if errors.As(err, &perm) {
-		return ModelResult{}, temporal.NewNonRetryableApplicationError(err.Error(), errModelRefused, err)
+	var s model.Score
+	out, billed, err := a.callModel(ctx, a.Model, len(text), f.AccessionNo, "score", func() (string, model.Usage, error) {
+		var err error
+		s, err = a.Model.Score(ctx, model.Input{Company: company, FormType: f.FormType, Items: d.Items, Text: text})
+		return s.Model, s.Usage, err
+	})
+	if out == callSkipped && err == nil {
+		if a.Hold.Active() {
+			return ModelResult{Note: "not scored: the model account needs attention"}, nil
+		}
+		return budgetNote, nil
 	}
 	if err != nil {
-		return ModelResult{}, err
+		return ModelResult{}, modelErr(err, billed)
 	}
 	if !model.Verify(s.Quote, text) {
 		return ModelResult{Model: s.Model, Note: "the model's quote wasn't found in the filing; score ignored"}, nil

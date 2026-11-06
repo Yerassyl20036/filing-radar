@@ -20,7 +20,8 @@
   <p class="lead">
     Every new filing on EDGAR, about a minute after SEC accepts it. Plain rules label every filing high, medium, low or routine,
     and a language model (DeepSeek by default, Claude as an option) scores 8-Ks, with a quote that's checked against the filing. Important shows medium and up.
-    Notes on what changed come in stage 3. <a href="/how-it-works">How it's built</a>.
+    High-importance 8-Ks get a short note on what changed since the company's previous one, and every claim in it quotes its source, checked word for word.
+    <a href="/how-it-works">How it's built</a>.
   </p>
 
   <div class="feed-bar">
@@ -81,6 +82,8 @@
   // Rows on screen by accession number, with the label each was drawn with,
   // so a refresh redraws only the rows whose label changed.
   const shown = new Map();
+  // Notes the reader opened, so a redrawn row keeps its note open.
+  const opened = new Set();
 
   // Storage can throw (private browsing, blocked site data). The choice then
   // lasts for this visit only.
@@ -121,10 +124,17 @@
   }
 
   // A label changes when the worker first decides it, redoes it with newer
-  // rules, or the model's score lands after the rules' label.
+  // rules, or the model's score lands after the rules' label. A note lands
+  // last, minutes after the label, so it is part of the key too.
   function labelKey(f) {
     const tr = f.triage;
-    return tr ? [tr.level, tr.decided_at, scored(tr) ? tr.model_score : ''].join(' ') : '';
+    const label = tr ? [tr.level, tr.decided_at, scored(tr) ? tr.model_score : ''].join(' ') : '';
+    return label + '|' + (noted(f) ? f.note.headline : '');
+  }
+
+  // The API sends only published notes; checking again costs nothing.
+  function noted(f) {
+    return !!f.note && f.note.status === 'published' && !!f.note.headline;
   }
 
   // Only 8-Ks are scored, under a daily cap, so most labels have no score.
@@ -147,6 +157,45 @@
       q.title = tr.model_quote;
       box.append(q);
     }
+    return box;
+  }
+
+  // The headline, and behind a button the checked claims: each claim, the
+  // passage it quotes, and which filing that passage comes from.
+  function noteLine(f) {
+    const n = f.note;
+    const box = el('div', 'analysis');
+    const head = el('div', 'analysis-head');
+    head.append(el('span', 'tag', 'Note'), el('span', 'headline', n.headline));
+
+    const claims = el('ol', 'claims');
+    claims.id = 'claims-' + f.accession_no;
+    for (const c of n.claims || []) {
+      const li = el('li');
+      li.append(el('p', '', c.text));
+      if (c.quote) li.append(el('blockquote', 'quote', c.quote));
+      const src = el('a', 'src', c.source === 'previous' ? 'previous filing' : 'this filing');
+      if (/^https:\/\/www\.sec\.gov\//.test(c.url)) src.href = c.url;
+      src.rel = 'noopener';
+      li.append(src);
+      claims.append(li);
+    }
+
+    const open = opened.has(f.accession_no);
+    claims.hidden = !open;
+    const btn = el('button', 'toggle', open ? 'Hide note' : 'Show note');
+    btn.type = 'button';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.setAttribute('aria-controls', claims.id);
+    btn.addEventListener('click', () => {
+      const now = claims.hidden;
+      claims.hidden = !now;
+      btn.setAttribute('aria-expanded', now ? 'true' : 'false');
+      btn.textContent = now ? 'Hide note' : 'Show note';
+      if (now) opened.add(f.accession_no); else opened.delete(f.accession_no);
+    });
+    head.append(btn);
+    box.append(head, claims);
     return box;
   }
 
@@ -187,6 +236,11 @@
     if (scored(tr)) {
       li.classList.add('scored');
       li.append(modelLine(tr));
+    }
+
+    if (noted(f)) {
+      li.classList.add('noted');
+      li.append(noteLine(f));
     }
 
     const at = new Date(f.accepted_at);

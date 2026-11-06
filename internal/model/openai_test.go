@@ -130,23 +130,24 @@ func TestPresetCutsLongFilings(t *testing.T) {
 
 func TestOpenAICompatibleErrors(t *testing.T) {
 	var perm *PermanentError
+	var acct *AccountError
 	tests := []struct {
-		name      string
-		status    int
-		body      string
-		permanent bool
+		name               string
+		status             int
+		body               string
+		permanent, account bool
 	}{
-		{"bad key", 401, `{"error":{"message":"bad key"}}`, true},
-		{"out of balance", 402, `{"error":{"message":"Insufficient Balance"}}`, true},
-		{"unknown model", 404, `{"error":{"message":"model not found"}}`, true},
-		{"rate limited or free quota used up", 429, `{"error":{"message":"RESOURCE_EXHAUSTED"}}`, false},
-		{"overloaded", 503, `{"error":{"message":"busy"}}`, false},
-		{"cut off", 200, completion("x", `{"score": 5`, "length"), false},
-		{"filtered", 200, completion("x", "", "content_filter"), true},
-		{"empty answer", 200, completion("x", "  ", "stop"), false},
-		{"not JSON", 200, completion("x", "I think it's important.", "stop"), false},
-		{"score out of range", 200, completion("x", `{"score": 140, "reason": "x", "quote": "y"}`, "stop"), true},
-		{"missing quote", 200, completion("x", `{"score": 40, "reason": "x", "quote": ""}`, "stop"), true},
+		{"bad key", 401, `{"error":{"message":"bad key"}}`, true, true},
+		{"out of balance", 402, `{"error":{"message":"Insufficient Balance"}}`, true, true},
+		{"unknown model", 404, `{"error":{"message":"model not found"}}`, true, false},
+		{"rate limited or free quota used up", 429, `{"error":{"message":"RESOURCE_EXHAUSTED"}}`, false, false},
+		{"overloaded", 503, `{"error":{"message":"busy"}}`, false, false},
+		{"cut off", 200, completion("x", `{"score": 5`, "length"), false, false},
+		{"filtered", 200, completion("x", "", "content_filter"), true, false},
+		{"empty answer", 200, completion("x", "  ", "stop"), false, false},
+		{"not JSON", 200, completion("x", "I think it's important.", "stop"), false, false},
+		{"score out of range", 200, completion("x", `{"score": 140, "reason": "x", "quote": "y"}`, "stop"), true, false},
+		{"missing quote", 200, completion("x", `{"score": 40, "reason": "x", "quote": ""}`, "stop"), true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,6 +160,23 @@ func TestOpenAICompatibleErrors(t *testing.T) {
 			if got := errors.As(err, &perm); got != tt.permanent {
 				t.Errorf("permanent = %v, want %v (%v)", got, tt.permanent, err)
 			}
+			if got := errors.As(err, &acct); got != tt.account {
+				t.Errorf("account = %v, want %v (%v)", got, tt.account, err)
+			}
 		})
+	}
+}
+
+// The estimate must not undercount: at least the prompt at three characters
+// a token, and the most output a call can produce.
+func TestEstimate(t *testing.T) {
+	c := NewOpenAICompatible(Presets["deepseek"], "k", "", "")
+	u := c.Estimate(120_000)
+	if u.InputTokens < 40_000 || u.OutputTokens != maxOutputTokens || u.CostUSD < Cost(Usage{InputTokens: 40_000, OutputTokens: maxOutputTokens}, 0.30, 1.20) {
+		t.Errorf("estimate %+v", u)
+	}
+	// Capped at what the client would send.
+	if big := c.Estimate(10_000_000); big.InputTokens > (maxChars+promptOverhead)/3+1 {
+		t.Errorf("uncapped estimate %+v", big)
 	}
 }
