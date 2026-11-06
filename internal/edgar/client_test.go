@@ -32,7 +32,7 @@ func TestLatest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(srv.URL, testAgent, 0)
+	c, err := NewClient(Config{BaseURL: srv.URL, UserAgent: testAgent})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestLatestReportsStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := NewClient(srv.URL, testAgent, 0)
+	c, _ := NewClient(Config{BaseURL: srv.URL, UserAgent: testAgent})
 	_, err := c.Latest(context.Background(), 0)
 	var se *StatusError
 	if !errors.As(err, &se) || se.Code != http.StatusTooManyRequests {
@@ -66,7 +66,7 @@ func TestLatestKeepsItsDistance(t *testing.T) {
 	defer srv.Close()
 
 	const gap = 80 * time.Millisecond
-	c, _ := NewClient(srv.URL, testAgent, gap)
+	c, _ := NewClient(Config{BaseURL: srv.URL, UserAgent: testAgent, MinGap: gap})
 	start := time.Now()
 	for range 3 {
 		if _, err := c.Latest(context.Background(), 0); err != nil {
@@ -80,7 +80,7 @@ func TestLatestKeepsItsDistance(t *testing.T) {
 
 func TestNewClientWantsAContact(t *testing.T) {
 	for _, ua := range []string{"", "Filing Radar", "Go-http-client/1.1"} {
-		if _, err := NewClient(DefaultBaseURL, ua, time.Second); err == nil {
+		if _, err := NewClient(Config{UserAgent: ua}); err == nil {
 			t.Errorf("User-Agent %q was accepted", ua)
 		}
 	}

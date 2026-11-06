@@ -1,7 +1,8 @@
 // Command worker runs on the Ashburn-1 server. Every minute it polls EDGAR
-// for new filings and stores them, and it reports its own health to Postgres,
-// including a full Temporal round trip. It also hosts the Temporal worker that
-// will run the radar's per-filing workflows from stage 4.
+// for new filings, stores them, and hands each unlabelled one to triage: a
+// label on the spot for routine forms, a Temporal workflow for the rest. It
+// also runs those workflows, and reports its own health to Postgres,
+// including a full Temporal round trip.
 package main
 
 import (
@@ -10,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -20,7 +22,9 @@ import (
 
 	"github.com/Yerassyl20036/filing-radar/internal/edgar"
 	"github.com/Yerassyl20036/filing-radar/internal/ingest"
+	"github.com/Yerassyl20036/filing-radar/internal/model"
 	"github.com/Yerassyl20036/filing-radar/internal/ping"
+	"github.com/Yerassyl20036/filing-radar/internal/pipeline"
 	"github.com/Yerassyl20036/filing-radar/internal/status"
 	"github.com/Yerassyl20036/filing-radar/internal/store"
 )
@@ -49,9 +53,39 @@ func main() {
 	}
 	defer c.Close()
 
-	w := worker.New(c, ping.TaskQueue, worker.Options{})
+	// One SEC client for the poller and the triage workflows, so they share
+	// one budget of a request per second. Without a contact address it's nil
+	// and nothing is sent to SEC.
+	sec, secErr := edgar.NewClient(edgar.Config{
+		BaseURL:   env("EDGAR_BASE_URL", edgar.DefaultBaseURL),
+		DataURL:   env("EDGAR_DATA_URL", edgar.DefaultDataURL),
+		UserAgent: os.Getenv("EDGAR_USER_AGENT"),
+		MinGap:    time.Second,
+	})
+	acts := &pipeline.Activities{Store: st, DailyCap: envInt("TRIAGE_MODEL_DAILY_CAP", 200)}
+	if secErr == nil {
+		// Only when set: a nil *Client inside an interface wouldn't be nil.
+		acts.SEC, acts.Docs = sec, sec
+	}
+	// Without a key the rules label everything on their own, which is how
+	// stage 2a ran. The key never leaves the worker's environment.
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		name := env("TRIAGE_MODEL", model.DefaultModel)
+		acts.Model = model.NewClaude(key, name)
+		slog.Info("model scoring on", "model", name, "daily_cap", acts.DailyCap)
+	} else {
+		slog.Info("model scoring off: ANTHROPIC_API_KEY is not set")
+	}
+
+	w := worker.New(c, ping.TaskQueue, worker.Options{
+		// Activities wait their turn for SEC; a few at a time keeps any one
+		// of them from timing out in the queue.
+		MaxConcurrentActivityExecutionSize: 8,
+	})
 	w.RegisterWorkflow(ping.Workflow)
 	w.RegisterActivity(ping.Activity)
+	w.RegisterWorkflow(pipeline.FilingWorkflow)
+	w.RegisterActivity(acts)
 	if err := w.Start(); err != nil {
 		fatal("start temporal worker", err)
 	}
@@ -63,12 +97,11 @@ func main() {
 
 	// The ingestor runs beside the health reports. Polling is short and safe
 	// to repeat, and its state lives in the filings table, so a plain loop is
-	// enough; Temporal is for work that has to wait, like stage 4's scoring.
+	// enough. Temporal is for the multi-step work per filing.
+	dispatcher := &pipeline.Dispatcher{Store: st, Temporal: c, Batch: 200}
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	wg.Go(func() {
-		runIngestor(ctx, st, host, env("EDGAR_BASE_URL", edgar.DefaultBaseURL), os.Getenv("EDGAR_USER_AGENT"))
-	})
+	wg.Go(func() { runIngestor(ctx, st, host, sec, secErr, dispatcher) })
 
 	report := func() {
 		d := status.WorkerDetail{TemporalServer: temporalServer}
@@ -89,20 +122,20 @@ func main() {
 
 // runIngestor polls EDGAR every minute until ctx ends and writes an
 // "ingestor" heartbeat after each poll, so the status page shows SEC errors
-// and possible gaps.
-func runIngestor(ctx context.Context, st *store.Store, host, baseURL, userAgent string) {
+// and possible gaps. After each poll it dispatches unlabelled filings, new
+// or left over, so triage catches up after any outage.
+func runIngestor(ctx context.Context, st *store.Store, host string, src *edgar.Client, srcErr error, dispatcher *pipeline.Dispatcher) {
 	beat := func(d status.IngestorDetail) {
 		if err := st.Beat(ctx, "ingestor", host, d); err != nil && ctx.Err() == nil {
 			slog.Error("write ingestor heartbeat", "err", err)
 		}
 	}
 
-	src, err := edgar.NewClient(baseURL, userAgent, time.Second)
-	if err != nil {
+	if srcErr != nil {
 		// SEC refuses requests without a contact address, so don't send any.
 		// Keep reporting why, so the status page says what to fix.
-		slog.Error("ingestor disabled", "err", err)
-		every(ctx, pollEvery, func() { beat(status.IngestorDetail{Error: err.Error()}) })
+		slog.Error("ingestor disabled", "err", srcErr)
+		every(ctx, pollEvery, func() { beat(status.IngestorDetail{Error: srcErr.Error()}) })
 		return
 	}
 
@@ -131,6 +164,17 @@ func runIngestor(ctx context.Context, st *store.Store, host, baseURL, userAgent 
 			slog.Info("poll", "pages", res.Pages, "filings", res.Filings, "new", res.New, "skipped", res.Skipped, "took", res.Took.Round(time.Millisecond))
 		}
 		beat(d)
+
+		// Even after a failed poll: earlier filings may still be waiting.
+		dctx, dcancel := context.WithTimeout(ctx, 30*time.Second)
+		defer dcancel()
+		dr, err := dispatcher.Dispatch(dctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			slog.Warn("dispatch", "labelled", dr.Labelled, "started", dr.Started, "running", dr.Running, "failed", dr.Failed, "err", err)
+		case dr != (pipeline.DispatchResult{}):
+			slog.Info("dispatch", "labelled", dr.Labelled, "started", dr.Started, "running", dr.Running)
+		}
 	})
 }
 
@@ -175,6 +219,18 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		fatal("bad configuration", errors.New(key+" must be a whole number"))
+	}
+	return n
 }
 
 func mustEnv(key string) string {
