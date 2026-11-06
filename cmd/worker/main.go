@@ -1,6 +1,7 @@
-// Command worker runs on the Ashburn-1 server. It hosts the Temporal worker
-// that will run the radar's per-filing workflows, and every minute it reports
-// its health to Postgres, including a full Temporal round trip.
+// Command worker runs on the Ashburn-1 server. Every minute it polls EDGAR
+// for new filings and stores them, and it reports its own health to Postgres,
+// including a full Temporal round trip. It also hosts the Temporal worker that
+// will run the radar's per-filing workflows from stage 4.
 package main
 
 import (
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,12 +18,17 @@ import (
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
 
+	"github.com/Yerassyl20036/filing-radar/internal/edgar"
+	"github.com/Yerassyl20036/filing-radar/internal/ingest"
 	"github.com/Yerassyl20036/filing-radar/internal/ping"
 	"github.com/Yerassyl20036/filing-radar/internal/status"
 	"github.com/Yerassyl20036/filing-radar/internal/store"
 )
 
-const reportEvery = time.Minute
+const (
+	reportEvery = time.Minute
+	pollEvery   = time.Minute
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -54,6 +61,15 @@ func main() {
 	temporalServer := env("TEMPORAL_SERVER_NAME", "local")
 	slog.Info("worker running", "server", host, "task_queue", ping.TaskQueue)
 
+	// The ingestor runs beside the health reports. Polling is short and safe
+	// to repeat, and its state lives in the filings table, so a plain loop is
+	// enough; Temporal is for work that has to wait, like stage 4's scoring.
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	wg.Go(func() {
+		runIngestor(ctx, st, host, env("EDGAR_BASE_URL", edgar.DefaultBaseURL), os.Getenv("EDGAR_USER_AGENT"))
+	})
+
 	report := func() {
 		d := status.WorkerDetail{TemporalServer: temporalServer}
 		if took, err := ping.RoundTrip(ctx, c); err != nil {
@@ -67,16 +83,68 @@ func main() {
 		}
 	}
 
-	report()
-	tick := time.NewTicker(reportEvery)
+	every(ctx, reportEvery, report)
+	slog.Info("worker stopping")
+}
+
+// runIngestor polls EDGAR every minute until ctx ends and writes an
+// "ingestor" heartbeat after each poll, so the status page shows SEC errors
+// and possible gaps.
+func runIngestor(ctx context.Context, st *store.Store, host, baseURL, userAgent string) {
+	beat := func(d status.IngestorDetail) {
+		if err := st.Beat(ctx, "ingestor", host, d); err != nil && ctx.Err() == nil {
+			slog.Error("write ingestor heartbeat", "err", err)
+		}
+	}
+
+	src, err := edgar.NewClient(baseURL, userAgent, time.Second)
+	if err != nil {
+		// SEC refuses requests without a contact address, so don't send any.
+		// Keep reporting why, so the status page says what to fix.
+		slog.Error("ingestor disabled", "err", err)
+		every(ctx, pollEvery, func() { beat(status.IngestorDetail{Error: err.Error()}) })
+		return
+	}
+
+	var lastGap *time.Time
+	every(ctx, pollEvery, func() {
+		pctx, cancel := context.WithTimeout(ctx, pollEvery-10*time.Second)
+		defer cancel()
+
+		res, err := ingest.Poll(pctx, src, st, ingest.MaxPages)
+		if res.Gap {
+			now := time.Now().UTC()
+			lastGap = &now
+			slog.Warn("possible gap: read the page cap without reaching stored filings", "pages", res.Pages)
+		}
+		d := status.IngestorDetail{
+			Pages: res.Pages, Filings: res.Filings, New: res.New, Skipped: res.Skipped,
+			TookMS: res.Took.Milliseconds(), LastGapAt: lastGap,
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return // shutting down
+			}
+			d.Error = err.Error()
+			slog.Warn("poll failed", "pages", res.Pages, "err", err)
+		} else {
+			slog.Info("poll", "pages", res.Pages, "filings", res.Filings, "new", res.New, "skipped", res.Skipped, "took", res.Took.Round(time.Millisecond))
+		}
+		beat(d)
+	})
+}
+
+// every runs fn now and then every interval until ctx ends.
+func every(ctx context.Context, interval time.Duration, fn func()) {
+	fn()
+	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("worker stopping")
 			return
 		case <-tick.C:
-			report()
+			fn()
 		}
 	}
 }
