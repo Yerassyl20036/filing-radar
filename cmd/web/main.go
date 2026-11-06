@@ -1,6 +1,5 @@
-// Command web serves the radar's website and API from the Frankfurt server.
-// For now the site is a live status page and a "how it works" page; the
-// filing feed is stage 1.
+// Command web serves the radar's website and API from the Frankfurt server:
+// the filing feed, a live status page and a "how it works" page.
 package main
 
 import (
@@ -49,11 +48,10 @@ func main() {
 
 	s := &server{store: st, name: env("SERVER_NAME", "local")}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", page("static/status.html"))
-	mux.HandleFunc("GET /how-it-works", page("static/how.html"))
-	mux.Handle("GET /static/", http.FileServerFS(static))
+	routePages(mux)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /api/status", s.status)
+	mux.HandleFunc("GET /api/filings", s.filings)
 
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -72,6 +70,14 @@ func main() {
 type server struct {
 	store *store.Store
 	name  string // which machine this is, shown on the status page
+}
+
+// routePages adds the pages, which need no database.
+func routePages(mux *http.ServeMux) {
+	mux.HandleFunc("GET /{$}", page("static/feed.html"))
+	mux.HandleFunc("GET /status", page("static/status.html"))
+	mux.HandleFunc("GET /how-it-works", page("static/how.html"))
+	mux.Handle("GET /static/", http.FileServerFS(static))
 }
 
 // page serves one embedded HTML file. A missing file is a build mistake, so it

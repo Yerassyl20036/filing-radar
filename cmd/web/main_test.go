@@ -10,14 +10,13 @@ import (
 // The pages need no database, so they can be checked without one.
 func TestPages(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", page("static/status.html"))
-	mux.HandleFunc("GET /how-it-works", page("static/how.html"))
-	mux.Handle("GET /static/", http.FileServerFS(static))
+	routePages(mux)
 
 	tests := []struct {
 		path, contentType, contains string
 	}{
-		{"/", "text/html", "System status"},
+		{"/", "text/html", "Latest SEC filings"},
+		{"/status", "text/html", "System status"},
 		{"/how-it-works", "text/html", "What happens to one filing"},
 		{"/static/site.css", "text/css", "--up"},
 	}

@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Filing radar · latest SEC filings</title>
+<meta name="description" content="Every new SEC filing, about a minute after EDGAR accepts it.">
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a class="brand" href="/">Filing radar</a>
+    <a href="/" aria-current="page">Feed</a>
+    <a href="/status">Status</a>
+    <a href="/how-it-works">How it works</a>
+  </nav>
+
+  <h1>Latest SEC filings</h1>
+  <p class="lead">
+    Every new filing on EDGAR, about a minute after SEC accepts it. This is stage 1: the raw feed, stored once per filing.
+    AI notes on what changed come in stage 3. <a href="/how-it-works">How it's built</a>.
+  </p>
+
+  <div class="feed-bar">
+    <div class="chips" id="chips" role="group" aria-label="Show one form type">
+      <button class="chip" data-form="" aria-pressed="true">All</button>
+      <button class="chip" data-form="8-K" aria-pressed="false">8-K</button>
+      <button class="chip" data-form="10-Q" aria-pressed="false">10-Q</button>
+      <button class="chip" data-form="10-K" aria-pressed="false">10-K</button>
+      <button class="chip" data-form="4" aria-pressed="false">4</button>
+      <button class="chip" data-form="144" aria-pressed="false">144</button>
+      <button class="chip" data-form="S-1" aria-pressed="false">S-1</button>
+    </div>
+    <div class="live" id="live"><span class="dot"></span><span id="live-text">Checking the ingestor…</span></div>
+  </div>
+
+  <div class="banner" id="banner">The feed isn't answering. Retrying…</div>
+  <ol class="feed" id="feed" aria-live="polite"></ol>
+  <p class="empty card" id="empty" hidden></p>
+  <button class="more" id="more" hidden>Load older filings</button>
+
+  <footer>
+    Times are New York time, when EDGAR accepted the filing. Each row links to the filing on sec.gov.
+    Data: <a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent">SEC EDGAR</a>.
+  </footer>
+</main>
+<script>
+  const PAGE = 50;
+  const feedEl = document.getElementById('feed');
+  const emptyEl = document.getElementById('empty');
+  const moreEl = document.getElementById('more');
+  const banner = document.getElementById('banner');
+  const liveDot = document.querySelector('#live .dot');
+  const liveText = document.getElementById('live-text');
+
+  const clock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' });
+  const full = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'medium' });
+
+  let form = '';
+  let next = '';
+  let gen = 0; // bumps when the filter changes, so late answers for the old filter are dropped
+  const seen = new Set();
+
+  async function api(params) {
+    const r = await fetch('/api/filings?' + new URLSearchParams(params), { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  // Everyone on the filing except the company itself: the insider, the fund…
+  function others(f) {
+    const names = (f.parties || []).filter(p => p.cik !== f.cik).map(p => p.name);
+    const unique = [...new Set(names)];
+    if (unique.length === 0) return '';
+    const shown = unique.slice(0, 2).join(', ');
+    return 'by ' + shown + (unique.length > 2 ? ` and ${unique.length - 2} more` : '');
+  }
+
+  function row(f, isNew) {
+    const li = el('li', 'filing' + (isNew ? ' new' : ''));
+    li.dataset.acc = f.accession_no;
+
+    li.append(el('span', 'form', f.form_type));
+
+    const who = el('div', 'who');
+    const a = el('a', '', f.company || f.accession_no);
+    if (/^https:\/\/www\.sec\.gov\//.test(f.url)) a.href = f.url;
+    a.rel = 'noopener';
+    who.append(a);
+    const by = others(f);
+    if (by) who.append(el('span', 'by', by));
+    li.append(who);
+
+    const at = new Date(f.accepted_at);
+    const lag = Math.max(0, Math.round((new Date(f.first_seen_at) - at) / 1000));
+    const t = el('time');
+    t.dateTime = f.accepted_at;
+    t.title = `Accepted ${full.format(at)} New York time. On the radar ${lag < 120 ? lag + ' s' : Math.round(lag / 60) + ' min'} later.`;
+    t.append(el('b', '', clock.format(at) + ' ET'), el('span', '', day.format(at)));
+    li.append(t);
+    return li;
+  }
+
+  function show(filings, where) {
+    const rows = [];
+    for (const f of filings) {
+      if (seen.has(f.accession_no)) continue;
+      seen.add(f.accession_no);
+      rows.push(row(f, where === 'top'));
+    }
+    if (where === 'top') feedEl.prepend(...rows); else feedEl.append(...rows);
+    return rows.length;
+  }
+
+  function settle() {
+    const none = seen.size === 0;
+    emptyEl.hidden = !none;
+    emptyEl.textContent = form
+      ? `No ${form} filings stored yet. They appear here within a minute of EDGAR accepting one.`
+      : 'No filings stored yet. The worker polls EDGAR every minute.';
+    moreEl.hidden = !next;
+  }
+
+  async function reset() {
+    const mine = ++gen;
+    try {
+      const data = await api({ form, limit: PAGE });
+      if (mine !== gen) return;
+      feedEl.replaceChildren();
+      seen.clear();
+      show(data.filings, 'bottom');
+      next = data.next;
+      banner.style.display = 'none';
+    } catch {
+      if (mine === gen) banner.style.display = 'block';
+    }
+    settle();
+  }
+
+  async function refresh() {
+    const mine = gen;
+    try {
+      const data = await api({ form, limit: PAGE });
+      if (mine !== gen) return;
+      const unseen = data.filings.filter(f => !seen.has(f.accession_no));
+      // A whole page of new rows means there may be more between them and
+      // what's shown; start over rather than leave a hole.
+      if (seen.size > 0 && unseen.length === data.filings.length && data.next) return reset();
+      if (seen.size === 0) next = data.next;
+      show(data.filings, 'top');
+      banner.style.display = 'none';
+      settle();
+    } catch {
+      banner.style.display = 'block';
+    }
+  }
+
+  moreEl.addEventListener('click', async () => {
+    const mine = gen;
+    moreEl.disabled = true;
+    try {
+      const data = await api({ form, limit: PAGE, before: next });
+      if (mine === gen) {
+        show(data.filings, 'bottom');
+        next = data.next;
+      }
+    } catch {
+      banner.style.display = 'block';
+    }
+    moreEl.disabled = false;
+    settle();
+  });
+
+  document.getElementById('chips').addEventListener('click', e => {
+    const b = e.target.closest('.chip');
+    if (!b) return;
+    form = b.dataset.form;
+    for (const c of document.querySelectorAll('.chip')) c.setAttribute('aria-pressed', c === b ? 'true' : 'false');
+    next = '';
+    reset();
+  });
+
+  // The same health report the status page shows, for the poller only.
+  async function ingestor() {
+    try {
+      const r = await fetch('/api/status', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      const c = (await r.json()).components.find(c => c.name === 'Ingestor');
+      if (!c) throw new Error('no ingestor');
+      liveDot.className = 'dot ' + c.state;
+      liveText.textContent = 'Ingestor: ' + c.note;
+    } catch {
+      liveDot.className = 'dot';
+      liveText.textContent = "The ingestor's status isn't available.";
+    }
+  }
+
+  reset();
+  ingestor();
+  setInterval(refresh, 10000);
+  setInterval(ingestor, 10000);
+</script>
+</body>
+</html>

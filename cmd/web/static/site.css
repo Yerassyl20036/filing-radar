@@ -41,6 +41,8 @@ svg.arch { width: 100%; height: auto; display: block; }
 @media (max-width: 640px) { svg.arch { min-width: 600px; } }
 svg.arch .server { fill: var(--soft); stroke: var(--line); }
 svg.arch .node { fill: var(--card); stroke: var(--line); }
+svg.arch .node.live { stroke: var(--muted); }
+svg.arch .node.next { stroke: var(--stale); stroke-dasharray: 5 4; }
 svg.arch .ext { fill: var(--card); stroke: var(--muted); stroke-dasharray: 4 4; }
 svg.arch text { fill: var(--text); font-size: 14px; font-weight: 550; }
 svg.arch .sub { fill: var(--muted); font-size: 12px; font-weight: 400; }
@@ -72,3 +74,31 @@ pre.tree { background: var(--card); border: 1px solid var(--line); border-radius
 pre.tree .c { color: var(--muted); }
 
 footer { margin-top: 44px; color: var(--muted); font-size: 13px; }
+
+/* Feed page */
+.feed-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: inherit; font-size: 13px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); cursor: pointer; }
+.chip:hover { color: var(--text); }
+.chip[aria-pressed="true"] { color: var(--text); border-color: var(--text); font-weight: 550; }
+.live { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.feed { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.feed:empty { display: none; }
+.filing { display: grid; grid-template-columns: 128px 1fr auto; grid-template-areas: "form who time"; gap: 4px 14px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); }
+.filing:first-child { border-top: 0; }
+.filing.new { animation: arrive 3s ease-out; }
+@keyframes arrive { from { background: color-mix(in srgb, var(--accent) 16%, transparent); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .filing.new { animation: none; } }
+.form { grid-area: form; justify-self: start; max-width: 100%; padding: 3px 8px; border-radius: 6px; background: var(--soft); font: 600 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who { grid-area: who; min-width: 0; }
+.who a { color: var(--text); font-weight: 550; text-decoration: none; overflow-wrap: anywhere; }
+.who a:hover { text-decoration: underline; }
+.by { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.filing time { grid-area: time; text-align: right; font-size: 13px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.filing time b { display: block; color: var(--text); font-weight: 550; }
+@media (max-width: 640px) {
+  .filing { grid-template-columns: 1fr auto; grid-template-areas: "form time" "who who"; padding: 10px 14px; }
+}
+.empty { color: var(--muted); text-align: center; padding: 28px 18px; }
+.more { display: block; margin: 16px auto 0; font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+.more:disabled { opacity: .6; cursor: progress; }

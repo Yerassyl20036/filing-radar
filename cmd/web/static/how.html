@@ -11,7 +11,8 @@
 <main>
   <nav>
     <a class="brand" href="/">Filing radar</a>
-    <a href="/">Status</a>
+    <a href="/">Feed</a>
+    <a href="/status">Status</a>
     <a href="/how-it-works" aria-current="page">How it works</a>
   </nav>
 
@@ -27,7 +28,7 @@
     <div class="arch-wrap">
     <svg class="arch" viewBox="0 0 720 392" role="img" aria-labelledby="arch-title arch-desc">
       <title id="arch-title">Architecture</title>
-      <desc id="arch-desc">Visitors reach Caddy and the Go web server in Frankfurt, which reads Postgres. The worker in Ashburn-1 reaches Postgres and the Temporal server in Ashburn-2 through SSH tunnels. SEC EDGAR feeds the worker from stage 1.</desc>
+      <desc id="arch-desc">Visitors reach Caddy and the Go web server in Frankfurt, which reads Postgres. The worker in Ashburn-1 polls SEC EDGAR every minute and reaches Postgres and the Temporal server in Ashburn-2 through SSH tunnels.</desc>
       <defs>
         <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M1 1 L9 5 L1 9 z" style="fill: var(--muted)"/>
@@ -38,7 +39,8 @@
       <text x="135" y="37" text-anchor="middle">Visitors</text>
       <rect class="ext" x="285" y="12" width="170" height="40" rx="8"/>
       <text x="370" y="29" text-anchor="middle">SEC EDGAR</text>
-      <text class="sub" x="370" y="45" text-anchor="middle">feeds the worker in stage 1</text>
+      <text class="sub" x="370" y="45" text-anchor="middle">polled every minute</text>
+      <circle class="state" id="s-edgar" cx="441" cy="26" r="5"/>
 
       <rect class="server" x="20" y="76" width="230" height="300" rx="14"/>
       <text class="label" x="36" y="100">FRANKFURT</text>
@@ -59,12 +61,12 @@
 
       <rect class="node" x="50" y="294" width="170" height="52" rx="8"/>
       <text x="135" y="316" text-anchor="middle">Postgres</text>
-      <text class="sub" x="135" y="334" text-anchor="middle">health now, filings next</text>
+      <text class="sub" x="135" y="334" text-anchor="middle">filings and health</text>
       <circle class="state" id="s-pg" cx="206" cy="308" r="5"/>
 
       <rect class="node" x="285" y="204" width="170" height="52" rx="8"/>
       <text x="370" y="226" text-anchor="middle">worker</text>
-      <text class="sub" x="370" y="244" text-anchor="middle">Go + Temporal SDK</text>
+      <text class="sub" x="370" y="244" text-anchor="middle">Go: poller, Temporal</text>
       <circle class="state" id="s-worker" cx="441" cy="218" r="5"/>
       <text class="sub" x="370" y="282" text-anchor="middle">+ two SSH tunnel containers</text>
 
@@ -83,7 +85,7 @@
     </svg>
     </div>
     <div class="legend">
-      <span>Dots are live: <span style="color:var(--up)">●</span> up <span style="color:var(--stale)">●</span> stale <span style="color:var(--down)">●</span> down</span>
+      <span>Dots are live: <span style="color:var(--up)">●</span> up <span style="color:var(--stale)">●</span> stale <span style="color:var(--down)">●</span> down. The EDGAR dot is the poller.</span>
       <span>Dashed lines from the worker are SSH tunnels</span>
       <span>Only Caddy is open to the internet</span>
     </div>
@@ -94,25 +96,95 @@
     <table class="servers">
       <tr><th>Server</th><th>Runs</th><th>Open to the internet</th></tr>
       <tr><td>Frankfurt</td><td>Caddy, the Go web server, Postgres</td><td>ports 80 and 443, Caddy only</td></tr>
-      <tr><td>Ashburn-1</td><td>the worker and two SSH tunnels</td><td>nothing</td></tr>
+      <tr><td>Ashburn-1</td><td>the worker (EDGAR poller and Temporal worker) and two SSH tunnels</td><td>nothing</td></tr>
       <tr><td>Ashburn-2</td><td>Temporal's single-binary server</td><td>nothing</td></tr>
     </table>
   </div>
 
+  <h2>Where the results go</h2>
+  <p>
+    Raw first, analysis later. A filing shows up in the feed within a minute, straight from EDGAR. The poller then starts
+    one Temporal workflow for it, with the accession number as the workflow ID, so no filing is ever analysed twice.
+    The workflow writes its triage, notes and scores to an <code>analysis</code> table under the same accession number,
+    and the feed shows them on the filing's row once they land. Temporal never serves visitors: the website reads only Postgres,
+    so if Temporal is down, the feed still works.
+  </p>
+  <div class="card">
+    <div class="arch-wrap">
+    <svg class="arch" viewBox="0 0 720 560" role="img" aria-labelledby="flow-title flow-desc">
+      <title id="flow-title">Where the results go</title>
+      <desc id="flow-desc">The poller stores raw filings in Postgres and starts one Temporal workflow per new filing. The workflow runs triage, the analyst agent and next-day scoring, and writes the results to an analysis table in the same Postgres. The website reads both tables and shows them to visitors.</desc>
+      <defs>
+        <marker id="head2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M1 1 L9 5 L1 9 z" style="fill: var(--muted)"/>
+        </marker>
+      </defs>
+
+      <rect class="ext" x="40" y="16" width="230" height="44" rx="8"/>
+      <text x="155" y="43" text-anchor="middle">SEC EDGAR feed</text>
+
+      <rect class="node live" x="40" y="96" width="230" height="56" rx="8"/>
+      <text x="155" y="119" text-anchor="middle">Poller</text>
+      <text class="sub" x="155" y="139" text-anchor="middle">every minute · stage 1</text>
+
+      <rect class="server" x="330" y="96" width="350" height="210" rx="14"/>
+      <text class="label" x="346" y="120">TEMPORAL WORKFLOW · ONE PER FILING</text>
+      <rect class="node next" x="350" y="136" width="310" height="40" rx="8"/>
+      <text x="366" y="161">Triage</text>
+      <text class="sub" x="644" y="161" text-anchor="end">rules, then a model · stage 2</text>
+      <rect class="node next" x="350" y="192" width="310" height="40" rx="8"/>
+      <text x="366" y="217">Analyst agent</text>
+      <text class="sub" x="644" y="217" text-anchor="end">with citations · stage 3</text>
+      <rect class="node next" x="350" y="248" width="310" height="40" rx="8"/>
+      <text x="366" y="273">Score next day</text>
+      <text class="sub" x="644" y="273" text-anchor="end">next close · stage 4</text>
+
+      <rect class="server" x="20" y="340" width="680" height="120" rx="14"/>
+      <text class="label" x="36" y="444">POSTGRES · FRANKFURT</text>
+      <rect class="node live" x="40" y="356" width="260" height="56" rx="8"/>
+      <text x="170" y="379" text-anchor="middle">filings</text>
+      <text class="sub" x="170" y="399" text-anchor="middle">raw, within a minute</text>
+      <rect class="node next" x="400" y="356" width="280" height="56" rx="8"/>
+      <text x="540" y="379" text-anchor="middle">analysis</text>
+      <text class="sub" x="540" y="399" text-anchor="middle">same accession number</text>
+
+      <rect class="node live" x="200" y="486" width="320" height="56" rx="8"/>
+      <text x="360" y="509" text-anchor="middle">Website</text>
+      <text class="sub" x="360" y="529" text-anchor="middle">filings joined with analysis</text>
+      <rect class="ext" x="560" y="492" width="140" height="44" rx="8"/>
+      <text x="630" y="519" text-anchor="middle">Visitors</text>
+
+      <line class="link" x1="155" y1="60" x2="155" y2="93" marker-end="url(#head2)"/>
+      <line class="link" x1="270" y1="124" x2="327" y2="124" marker-end="url(#head2)"/>
+      <line class="link" x1="155" y1="152" x2="155" y2="353" marker-end="url(#head2)"/>
+      <line class="link" x1="505" y1="176" x2="505" y2="189" marker-end="url(#head2)"/>
+      <line class="link" x1="505" y1="232" x2="505" y2="245" marker-end="url(#head2)"/>
+      <line class="link" x1="540" y1="306" x2="540" y2="353" marker-end="url(#head2)"/>
+      <line class="link" x1="360" y1="460" x2="360" y2="483" marker-end="url(#head2)"/>
+      <line class="link" x1="520" y1="514" x2="557" y2="514" marker-end="url(#head2)"/>
+    </svg>
+    </div>
+    <div class="legend">
+      <span>Solid outline: live now</span>
+      <span><span style="color:var(--stale)">Amber dashes</span>: stages 2 to 4, coming next</span>
+      <span>Grey dashes: outside the system</span>
+    </div>
+  </div>
+
   <h2>What happens to one filing</h2>
   <ol class="steps">
-    <li><span class="n">1</span><div><b>Fetch.</b><p>Every minute the worker reads EDGAR's latest-filings feed and stores each filing once, keyed by its accession number.</p></div><span class="pill next">stage 1, next</span></li>
-    <li><span class="n">2</span><div><b>Triage.</b><p>Plain rules read the 8-K item numbers, then a model scores how material the filing is. Most filings never reach an LLM.</p></div><span class="pill">stage 2</span></li>
+    <li><span class="n">1</span><div><b>Fetch.</b><p>Every minute the worker reads EDGAR's latest-filings feed, pages back until it reaches filings it already has, and stores each new one once, keyed by its accession number.</p></div><span class="pill live">stage 1, live</span></li>
+    <li><span class="n">2</span><div><b>Triage.</b><p>Plain rules read the 8-K item numbers, then a model scores how material the filing is. Most filings never reach an LLM.</p></div><span class="pill next">stage 2, next</span></li>
     <li><span class="n">3</span><div><b>Analyst agent.</b><p>For material filings: compare with the company's previous filing and write a short note on what changed.</p></div><span class="pill">stage 3</span></li>
     <li><span class="n">4</span><div><b>Check.</b><p>Every claim must cite a passage that really exists in the filing, or the note isn't published.</p></div><span class="pill">stage 3</span></li>
     <li><span class="n">5</span><div><b>Publish.</b><p>The note appears in the feed with links to the original filing on sec.gov.</p></div><span class="pill">stages 1–3</span></li>
     <li><span class="n">6</span><div><b>Score.</b><p>A Temporal workflow waits until after the next market close, fetches the price move, and checks the prediction. Scores are public.</p></div><span class="pill">stage 4</span></li>
   </ol>
-  <p class="muted" style="font-size:14px">Live today is stage 0: the three servers, the deploy pipeline, the tunnels and the health checks this page reads.</p>
+  <p class="muted" style="font-size:14px">Live today: stage 0 (the three servers, the deploy pipeline, the tunnels, the health checks) and stage 1, <a href="/">the filing feed</a>.</p>
 
   <h2>Data sources</h2>
   <ul class="decisions">
-    <li><a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent">EDGAR latest filings</a> <span>— the live feed the worker will poll.</span></li>
+    <li><a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent">EDGAR latest filings</a> <span>— the live feed the worker polls every minute.</span></li>
     <li><a href="https://www.sec.gov/Archives/edgar/daily-index/">EDGAR daily index</a> <span>— every filing of each day, used to repair gaps.</span></li>
     <li><a href="https://www.sec.gov/developer">SEC developer resources</a> <span>— the access rules: a declared User-Agent and at most 10 requests per second. The radar stays under 1.</span></li>
   </ul>
@@ -123,13 +195,16 @@
     <li>No database port on the internet. <span>The worker reaches Postgres and Temporal through SSH tunnels; each tunnel key may open exactly one port on one machine.</span></li>
     <li>A model only where rules can't decide. <span>Item numbers and form types are rules; only filings that might matter go to an LLM.</span></li>
     <li>Every claim is checked before it's published. <span>A note whose citation doesn't match the filing's text is retried or dropped.</span></li>
+    <li>Store a filing only after paging stops. <span>EDGAR lists a filing once per party, and a Form 4's two entries can land on two pages. Storing page by page would mistake the second half for "already stored", stop paging early and skip filings.</span></li>
     <li>Temporal for waiting, not for everything. <span>The one-minute poll is safe to repeat and needs no workflow engine; the next-day score has to survive restarts, so it gets one.</span></li>
     <li>Deploys by hand, from <code>main</code> only. <span>The pipeline ends by proving the worker reached both other servers.</span></li>
   </ul>
 
   <h2>Project layout</h2>
 <pre class="tree">cmd/web          <span class="c">website and API, runs in Frankfurt</span>
-cmd/worker       <span class="c">Temporal worker and health reports, runs in Ashburn-1</span>
+cmd/worker       <span class="c">EDGAR poller, Temporal worker and health reports, runs in Ashburn-1</span>
+internal/edgar   <span class="c">EDGAR client and feed parser</span>
+internal/ingest  <span class="c">one poll: page until overlap, then store</span>
 internal/store   <span class="c">Postgres access and schema</span>
 internal/status  <span class="c">turns health reports into what the status page shows</span>
 internal/ping    <span class="c">the one-minute Temporal round trip</span>
@@ -140,7 +215,7 @@ deploy/          <span class="c">one folder per server, the tunnel image, a loca
 </main>
 <script>
   // Colour the diagram's dots from the same API the status page uses.
-  const dotFor = { Website: ['s-caddy', 's-web'], Postgres: ['s-pg'], Worker: ['s-worker'], Temporal: ['s-temporal'] };
+  const dotFor = { Website: ['s-caddy', 's-web'], Postgres: ['s-pg'], Worker: ['s-worker'], Temporal: ['s-temporal'], Ingestor: ['s-edgar'] };
   const live = document.getElementById('live');
 
   async function refresh() {
@@ -152,7 +227,7 @@ deploy/          <span class="c">one folder per server, the tunnel image, a loca
         for (const id of dotFor[c.name] || []) document.getElementById(id).setAttribute('class', 'state ' + c.state);
       }
       const up = components.filter(c => c.state === 'up').length;
-      const notes = components.filter(c => c.name === 'Temporal' || c.name === 'Worker').map(c => c.name + ': ' + c.note);
+      const notes = components.filter(c => c.name === 'Temporal' || c.name === 'Ingestor').map(c => c.name + ': ' + c.note);
       live.textContent = `Live now: ${up} of ${components.length} parts up · ${notes.join(' · ')}`;
     } catch {
       live.textContent = "Live status isn't answering right now.";

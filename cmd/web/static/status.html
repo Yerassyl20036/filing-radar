@@ -10,16 +10,18 @@
 <main>
   <nav>
     <a class="brand" href="/">Filing radar</a>
-    <a href="/" aria-current="page">Status</a>
+    <a href="/">Feed</a>
+    <a href="/status" aria-current="page">Status</a>
     <a href="/how-it-works">How it works</a>
   </nav>
   <h1>System status</h1>
-  <p class="lead">Live health of every part of the system, across three servers. The filing feed comes next. <a href="/how-it-works">See how it's built</a>.</p>
+  <p class="lead">Live health of every part of the system, across three servers. <a href="/">See the filing feed</a> or <a href="/how-it-works">how it's built</a>.</p>
   <div class="banner" id="banner">The status API isn't answering. Retrying…</div>
   <div class="grid" id="grid"></div>
   <p class="muted" style="margin-top:28px;font-size:14px">
     The worker in Ashburn reaches Postgres in Frankfurt and Temporal in Ashburn-2 through SSH tunnels,
-    so neither is open to the internet. Every minute it runs a small Temporal workflow end to end and records the result.
+    so neither is open to the internet. Every minute it polls EDGAR for new filings, runs a small Temporal workflow end to end,
+    and records both results.
   </p>
   <footer id="checked">Checking…</footer>
 </main>
