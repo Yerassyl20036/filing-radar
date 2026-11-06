@@ -61,3 +61,42 @@ func TestBuild(t *testing.T) {
 		})
 	}
 }
+
+func ingestorBeat(t *testing.T, age time.Duration, d IngestorDetail, now time.Time) store.Heartbeat {
+	t.Helper()
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store.Heartbeat{Service: "ingestor", Host: "ashburn-1", Detail: raw, LastSeen: now.Add(-age)}
+}
+
+func TestBuildIngestor(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	gapAt := now.Add(-time.Hour)
+	tests := []struct {
+		name     string
+		beats    []store.Heartbeat
+		want     State
+		wantNote string
+	}{
+		{"never polled", nil, Down, "has never polled EDGAR"},
+		{"healthy", []store.Heartbeat{ingestorBeat(t, 20*time.Second, IngestorDetail{Pages: 1, New: 3}, now)},
+			Up, "last poll 20 s ago: 3 new filings, 1 page"},
+		{"SEC refusing", []store.Heartbeat{ingestorBeat(t, 20*time.Second, IngestorDetail{Error: "SEC answered 429: too many requests"}, now)},
+			Down, "last poll failed: SEC answered 429: too many requests"},
+		{"missed polls", []store.Heartbeat{ingestorBeat(t, 4*time.Minute, IngestorDetail{Pages: 1, New: 1}, now)},
+			Stale, "last poll 4 min ago: 1 new filing, 1 page"},
+		{"gap an hour ago", []store.Heartbeat{ingestorBeat(t, 10*time.Second, IngestorDetail{Pages: 1, LastGapAt: &gapAt}, now)},
+			Up, "last poll 10 s ago: 0 new filings, 1 page; possible gap 1.0 h ago"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			comps := Build(now, "frankfurt-1", nil, time.Millisecond, tt.beats)
+			got := comps[len(comps)-1]
+			if got.Name != "Ingestor" || got.State != tt.want || got.Note != tt.wantNote {
+				t.Errorf("got %s %s %q, want %s %q", got.Name, got.State, got.Note, tt.want, tt.wantNote)
+			}
+		})
+	}
+}
