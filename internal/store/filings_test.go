@@ -32,7 +32,10 @@ func testStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	clean := func() {
-		_, _ = s.pool.Exec(context.Background(), `DELETE FROM filings WHERE accession_no LIKE '9999999999-%'`)
+		// triage and filing_details point at filings, so they go first.
+		for _, table := range []string{"triage", "filing_details", "filings"} {
+			_, _ = s.pool.Exec(context.Background(), `DELETE FROM `+table+` WHERE accession_no LIKE '9999999999-%'`)
+		}
 	}
 	clean()
 	t.Cleanup(func() { clean(); s.Close() })

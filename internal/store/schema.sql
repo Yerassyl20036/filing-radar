@@ -25,3 +25,30 @@ CREATE TABLE IF NOT EXISTS filings (
 -- (accepted_at, accession_no) cursor. Postgres scans these backwards.
 CREATE INDEX IF NOT EXISTS filings_by_time ON filings (accepted_at, accession_no);
 CREATE INDEX IF NOT EXISTS filings_by_form_time ON filings (form_type, accepted_at, accession_no);
+
+-- What SEC's per-company JSON said about a filing: the 8-K item numbers and
+-- the main document. Kept so re-labelling never has to ask SEC again.
+CREATE TABLE IF NOT EXISTS filing_details (
+    accession_no text        PRIMARY KEY REFERENCES filings (accession_no),
+    items        text[]      NOT NULL DEFAULT '{}',
+    primary_doc  text        NOT NULL DEFAULT '',
+    fetched_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- Our judgment: how much a filing matters, and why. A filing with no row here
+-- is pending. rules_version says which rules decided, so a row is redone when
+-- the rules change.
+CREATE TABLE IF NOT EXISTS triage (
+    accession_no  text        PRIMARY KEY REFERENCES filings (accession_no),
+    level         text        NOT NULL CHECK (level IN ('high', 'medium', 'low', 'routine')),
+    reasons       text[]      NOT NULL DEFAULT '{}',
+    rules_version int         NOT NULL,
+    model_score   int,                     -- stage 2b; NULL until a model has looked
+    model_reason  text        NOT NULL DEFAULT '',
+    model_quote   text        NOT NULL DEFAULT '', -- the passage the model cited, checked to be in the filing
+    model         text        NOT NULL DEFAULT '',
+    decided_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- The feed can be filtered to a few levels.
+CREATE INDEX IF NOT EXISTS triage_by_level ON triage (level);

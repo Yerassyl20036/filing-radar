@@ -22,6 +22,7 @@ type FilingRow struct {
 	URL         string          `json:"url"`
 	Parties     json.RawMessage `json:"parties"`
 	FirstSeenAt time.Time       `json:"first_seen_at"`
+	Triage      *Triage         `json:"triage"` // nil while pending
 }
 
 // Cursor marks the last row of a page; the next page starts after it.
@@ -32,9 +33,10 @@ type Cursor struct {
 }
 
 type FilingQuery struct {
-	FormType string  // "" for every form
-	Limit    int     // at most this many rows
-	Before   *Cursor // nil for the newest
+	FormType string   // "" for every form
+	Levels   []string // only filings labelled one of these; nil for all, pending included
+	Limit    int      // at most this many rows
+	Before   *Cursor  // nil for the newest
 }
 
 // InsertFilings stores filings it hasn't seen and ignores the rest, so a
@@ -104,29 +106,68 @@ func (s *Store) Filings(ctx context.Context, q FilingQuery) ([]FilingRow, error)
 		return fmt.Sprintf("$%d", len(args))
 	}
 	if q.FormType != "" {
-		where = append(where, "form_type = "+arg(q.FormType))
+		where = append(where, "f.form_type = "+arg(q.FormType))
+	}
+	if q.Levels != nil {
+		// A pending filing has no triage row, so its NULL level never matches.
+		where = append(where, "t.level = ANY("+arg(q.Levels)+")")
 	}
 	if q.Before != nil {
-		where = append(where, fmt.Sprintf("(accepted_at, accession_no) < (%s, %s)", arg(q.Before.AcceptedAt), arg(q.Before.AccessionNo)))
+		where = append(where, fmt.Sprintf("(f.accepted_at, f.accession_no) < (%s, %s)", arg(q.Before.AcceptedAt), arg(q.Before.AccessionNo)))
 	}
 
-	sql := `SELECT accession_no, form_type, cik, company, accepted_at, url, parties, first_seen_at FROM filings`
+	sql := `SELECT f.accession_no, f.form_type, f.cik, f.company, f.accepted_at, f.url, f.parties, f.first_seen_at,
+		t.level, t.reasons, t.rules_version, t.model_score, t.model_reason, t.model_quote, t.model, t.decided_at, d.items
+		FROM filings f
+		LEFT JOIN triage t ON t.accession_no = f.accession_no
+		LEFT JOIN filing_details d ON d.accession_no = f.accession_no`
 	if len(where) > 0 {
 		sql += " WHERE " + strings.Join(where, " AND ")
 	}
-	sql += " ORDER BY accepted_at DESC, accession_no DESC LIMIT " + arg(q.Limit)
+	sql += " ORDER BY f.accepted_at DESC, f.accession_no DESC LIMIT " + arg(q.Limit)
 
 	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read filings: %w", err)
 	}
-	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (FilingRow, error) {
-		var f FilingRow
-		err := row.Scan(&f.AccessionNo, &f.FormType, &f.CIK, &f.Company, &f.AcceptedAt, &f.URL, &f.Parties, &f.FirstSeenAt)
-		return f, err
-	})
+	out, err := pgx.CollectRows(rows, scanFilingRow)
 	if err != nil {
 		return nil, fmt.Errorf("read filings: %w", err)
 	}
 	return out, nil
+}
+
+// scanFilingRow reads one row of Filings. The triage columns are all NULL
+// when the filing is still pending, so they land in nullable values first.
+func scanFilingRow(row pgx.CollectableRow) (FilingRow, error) {
+	var (
+		f            FilingRow
+		level        *string
+		reasons      []string
+		rulesVersion *int
+		modelScore   *int
+		modelReason  *string
+		modelQuote   *string
+		model        *string
+		decidedAt    *time.Time
+		items        []string
+	)
+	err := row.Scan(&f.AccessionNo, &f.FormType, &f.CIK, &f.Company, &f.AcceptedAt, &f.URL, &f.Parties, &f.FirstSeenAt,
+		&level, &reasons, &rulesVersion, &modelScore, &modelReason, &modelQuote, &model, &decidedAt, &items)
+	if err != nil || level == nil {
+		return f, err
+	}
+	f.Triage = &Triage{
+		AccessionNo:  f.AccessionNo,
+		Level:        *level,
+		Reasons:      orEmpty(reasons),
+		Items:        orEmpty(items),
+		RulesVersion: *rulesVersion,
+		ModelScore:   modelScore,
+		ModelReason:  *modelReason,
+		ModelQuote:   *modelQuote,
+		Model:        *model,
+		DecidedAt:    *decidedAt,
+	}
+	return f, nil
 }
