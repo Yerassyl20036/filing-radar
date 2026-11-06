@@ -59,6 +59,8 @@ jobs:
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       TRIAGE_PROVIDER: ${{ vars.TRIAGE_PROVIDER }}
       TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
@@ -100,7 +102,7 @@ jobs:
         run: |
           echo "WORKER_DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           deploy/deploy.sh ashburn-worker "$WORKER_HOST" IMAGE TUNNEL_IMAGE TAG POSTGRES_PASSWORD FRANKFURT_HOST TEMPORAL_HOST EDGAR_USER_AGENT \
-            'DEEPSEEK_API_KEY?' 'ANTHROPIC_API_KEY?' 'TRIAGE_PROVIDER?' 'TRIAGE_MODEL?' 'TRIAGE_MODEL_DAILY_CAP?'
+            'DEEPSEEK_API_KEY?' 'GEMINI_API_KEY?' 'GROQ_API_KEY?' 'ANTHROPIC_API_KEY?' 'TRIAGE_PROVIDER?' 'TRIAGE_MODEL?' 'TRIAGE_MODEL_DAILY_CAP?'
 
       # Proves the whole chain without needing public ports: the worker must
       # have reached Postgres and Temporal through both tunnels.

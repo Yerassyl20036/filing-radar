@@ -73,7 +73,7 @@ func main() {
 		acts.Model = scorer
 		slog.Info("model scoring on", "provider", provider, "model", os.Getenv("TRIAGE_MODEL"), "daily_cap", acts.DailyCap)
 	} else {
-		slog.Info("model scoring off: no DEEPSEEK_API_KEY or ANTHROPIC_API_KEY")
+		slog.Info("model scoring off: no model API key is set")
 	}
 
 	w := worker.New(c, ping.TaskQueue, worker.Options{
@@ -220,37 +220,40 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-// chooseModel picks the 8-K scorer. TRIAGE_PROVIDER names it ("deepseek" or
-// "anthropic"); left empty, whichever key is set decides, DeepSeek first.
-// TRIAGE_MODEL overrides the provider's default model.
+// chooseModel picks the 8-K scorer. TRIAGE_PROVIDER names it (deepseek,
+// gemini, groq or anthropic); left empty, the first provider with a key set
+// wins, in that order. TRIAGE_MODEL overrides the provider's default model.
 func chooseModel() (model.Scorer, string) {
-	name := os.Getenv("TRIAGE_MODEL")
-	ds, an := os.Getenv("DEEPSEEK_API_KEY"), os.Getenv("ANTHROPIC_API_KEY")
+	keys := map[string]string{
+		"deepseek":  os.Getenv("DEEPSEEK_API_KEY"),
+		"gemini":    os.Getenv("GEMINI_API_KEY"),
+		"groq":      os.Getenv("GROQ_API_KEY"),
+		"anthropic": os.Getenv("ANTHROPIC_API_KEY"),
+	}
 	provider := os.Getenv("TRIAGE_PROVIDER")
 	if provider == "" {
-		switch {
-		case ds != "":
-			provider = "deepseek"
-		case an != "":
-			provider = "anthropic"
-		default:
+		for _, p := range []string{"deepseek", "gemini", "groq", "anthropic"} {
+			if keys[p] != "" {
+				provider = p
+				break
+			}
+		}
+		if provider == "" {
 			return nil, ""
 		}
 	}
-	switch provider {
-	case "deepseek":
-		if ds == "" {
-			fatal("bad configuration", errors.New("TRIAGE_PROVIDER is deepseek but DEEPSEEK_API_KEY is not set"))
-		}
-		return model.NewDeepSeek(ds, name, os.Getenv("DEEPSEEK_BASE_URL")), provider
-	case "anthropic":
-		if an == "" {
-			fatal("bad configuration", errors.New("TRIAGE_PROVIDER is anthropic but ANTHROPIC_API_KEY is not set"))
-		}
-		return model.NewClaude(an, name), provider
+	key, known := keys[provider]
+	if !known {
+		fatal("bad configuration", errors.New("TRIAGE_PROVIDER must be deepseek, gemini, groq or anthropic"))
 	}
-	fatal("bad configuration", errors.New(`TRIAGE_PROVIDER must be "deepseek" or "anthropic"`))
-	return nil, ""
+	if key == "" {
+		fatal("bad configuration", errors.New("TRIAGE_PROVIDER is "+provider+" but its API key is not set"))
+	}
+	name := os.Getenv("TRIAGE_MODEL")
+	if provider == "anthropic" {
+		return model.NewClaude(key, name), provider
+	}
+	return model.NewOpenAICompatible(model.Presets[provider], key, name, os.Getenv("TRIAGE_BASE_URL")), provider
 }
 
 func envInt(key string, fallback int) int {

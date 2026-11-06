@@ -67,8 +67,9 @@ which only accepts deploys from `main`:
 | Secret | `POSTGRES_PASSWORD` | database password |
 | Secret | `EDGAR_USER_AGENT` | `Filing Radar <your email>`: SEC refuses requests without a contact |
 | Secret | `DEEPSEEK_API_KEY` | optional: the model that scores 8-Ks (default model `deepseek-chat`) |
+| Secret | `GEMINI_API_KEY`, `GROQ_API_KEY` | optional: free tiers instead (`gemini-3.5-flash-lite`, `openai/gpt-oss-120b`); Groq's free tier fits about 30-40 filings a day |
 | Secret | `ANTHROPIC_API_KEY` | optional: Claude instead (default model `claude-opus-5-5`); with no key at all the rules label everything on their own |
-| Variable | `TRIAGE_PROVIDER` | optional: `deepseek` or `anthropic`; empty means whichever key is set, DeepSeek first |
+| Variable | `TRIAGE_PROVIDER` | optional: `deepseek`, `gemini`, `groq` or `anthropic`; empty means the first with a key, in that order |
 | Variable | `TRIAGE_MODEL` | optional: overrides the provider's default model |
 | Variable | `TRIAGE_MODEL_DAILY_CAP` | optional, default 200 model calls per UTC day |
 | Variable | `SITE_DOMAIN` | the site's name; Caddy gets its certificate |
@@ -114,7 +115,7 @@ internal/edgar   EDGAR client and feed parser
 internal/ingest  one poll: page until overlap, then store
 internal/triage  plain rules that label each filing
 internal/pipeline the per-filing Temporal workflow and its dispatcher
-internal/model   the model call (DeepSeek or Claude) that scores an 8-K, and the quote check
+internal/model   the model call that scores an 8-K (any OpenAI-compatible API, or Claude), and the quote check
 internal/store   Postgres access and schema
 internal/status  turns health reports into what the status page shows
 internal/ping    the one-minute Temporal round trip

@@ -48,6 +48,8 @@ services:
       EDGAR_BASE_URL: ${EDGAR_BASE_URL:-https://www.sec.gov}
       EDGAR_DATA_URL: ${EDGAR_DATA_URL:-https://data.sec.gov}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       TRIAGE_PROVIDER: ${TRIAGE_PROVIDER:-}
       TRIAGE_MODEL: ${TRIAGE_MODEL:-}

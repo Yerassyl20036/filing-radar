@@ -50,7 +50,7 @@ func (c *Claude) Score(ctx context.Context, in Input) (Score, error) {
 		Model:     anthropic.Model(c.model),
 		MaxTokens: 8000, // room for the model's thinking as well as the short JSON answer
 		System:    []anthropic.BetaTextBlockParam{{Text: system}},
-		Messages:  []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(userPrompt(in)))},
+		Messages:  []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(userPrompt(in, maxChars)))},
 		OutputConfig: anthropic.BetaOutputConfigParam{
 			// Classification gains little from deep thought; low effort keeps
 			// each call quick and cheap.
