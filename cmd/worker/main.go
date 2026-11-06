@@ -68,13 +68,12 @@ func main() {
 		acts.SEC, acts.Docs = sec, sec
 	}
 	// Without a key the rules label everything on their own, which is how
-	// stage 2a ran. The key never leaves the worker's environment.
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		name := env("TRIAGE_MODEL", model.DefaultModel)
-		acts.Model = model.NewClaude(key, name)
-		slog.Info("model scoring on", "model", name, "daily_cap", acts.DailyCap)
+	// stage 2a ran. Keys never leave the worker's environment.
+	if scorer, provider := chooseModel(); scorer != nil {
+		acts.Model = scorer
+		slog.Info("model scoring on", "provider", provider, "model", os.Getenv("TRIAGE_MODEL"), "daily_cap", acts.DailyCap)
 	} else {
-		slog.Info("model scoring off: ANTHROPIC_API_KEY is not set")
+		slog.Info("model scoring off: no DEEPSEEK_API_KEY or ANTHROPIC_API_KEY")
 	}
 
 	w := worker.New(c, ping.TaskQueue, worker.Options{
@@ -219,6 +218,39 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// chooseModel picks the 8-K scorer. TRIAGE_PROVIDER names it ("deepseek" or
+// "anthropic"); left empty, whichever key is set decides, DeepSeek first.
+// TRIAGE_MODEL overrides the provider's default model.
+func chooseModel() (model.Scorer, string) {
+	name := os.Getenv("TRIAGE_MODEL")
+	ds, an := os.Getenv("DEEPSEEK_API_KEY"), os.Getenv("ANTHROPIC_API_KEY")
+	provider := os.Getenv("TRIAGE_PROVIDER")
+	if provider == "" {
+		switch {
+		case ds != "":
+			provider = "deepseek"
+		case an != "":
+			provider = "anthropic"
+		default:
+			return nil, ""
+		}
+	}
+	switch provider {
+	case "deepseek":
+		if ds == "" {
+			fatal("bad configuration", errors.New("TRIAGE_PROVIDER is deepseek but DEEPSEEK_API_KEY is not set"))
+		}
+		return model.NewDeepSeek(ds, name, os.Getenv("DEEPSEEK_BASE_URL")), provider
+	case "anthropic":
+		if an == "" {
+			fatal("bad configuration", errors.New("TRIAGE_PROVIDER is anthropic but ANTHROPIC_API_KEY is not set"))
+		}
+		return model.NewClaude(an, name), provider
+	}
+	fatal("bad configuration", errors.New(`TRIAGE_PROVIDER must be "deepseek" or "anthropic"`))
+	return nil, ""
 }
 
 func envInt(key string, fallback int) int {

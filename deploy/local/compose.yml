@@ -3,8 +3,9 @@
 #   docker compose -f deploy/local/compose.yml up --build
 # then open http://localhost:8088. Without EDGAR_USER_AGENT the site runs and
 # the status page says the ingestor is waiting for it. To try the model step,
-# put ANTHROPIC_API_KEY=... in deploy/local/.env (git ignores it); compose
-# reads it from there. Locally the model is capped at 20 calls a day.
+# put DEEPSEEK_API_KEY=... (or ANTHROPIC_API_KEY=...) in deploy/local/.env
+# (git ignores it); compose reads it from there. Locally the model is capped
+# at 20 calls a day.
 name: radar-local
 
 services:
@@ -46,8 +47,10 @@ services:
       EDGAR_USER_AGENT: ${EDGAR_USER_AGENT:-}
       EDGAR_BASE_URL: ${EDGAR_BASE_URL:-https://www.sec.gov}
       EDGAR_DATA_URL: ${EDGAR_DATA_URL:-https://data.sec.gov}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      TRIAGE_MODEL: ${TRIAGE_MODEL:-claude-opus-5-5}
+      TRIAGE_PROVIDER: ${TRIAGE_PROVIDER:-}
+      TRIAGE_MODEL: ${TRIAGE_MODEL:-}
       TRIAGE_MODEL_DAILY_CAP: ${TRIAGE_MODEL_DAILY_CAP:-20}
     depends_on:
       postgres:

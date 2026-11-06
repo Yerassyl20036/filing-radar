@@ -30,9 +30,13 @@ services:
       # SEC requires a name and contact email; it's a secret so the email
       # stays out of the public repo and the logs.
       EDGAR_USER_AGENT: ${EDGAR_USER_AGENT:?}
-      # Stage 2b: a Claude model scores 8-Ks. Without a key the rules decide alone.
+      # Stage 2b: a language model scores 8-Ks, DeepSeek or Claude, whichever
+      # key is set (TRIAGE_PROVIDER can name one). Without a key the rules
+      # decide alone. An empty TRIAGE_MODEL means the provider's default.
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      TRIAGE_MODEL: ${TRIAGE_MODEL:-claude-opus-5-5}
+      TRIAGE_PROVIDER: ${TRIAGE_PROVIDER:-}
+      TRIAGE_MODEL: ${TRIAGE_MODEL:-}
       TRIAGE_MODEL_DAILY_CAP: ${TRIAGE_MODEL_DAILY_CAP:-200}
     depends_on: [pg-tunnel, temporal-tunnel]
     mem_limit: 128m

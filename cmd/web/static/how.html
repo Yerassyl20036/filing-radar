@@ -96,7 +96,7 @@
     <table class="servers">
       <tr><th>Server</th><th>Runs</th><th>Open to the internet</th></tr>
       <tr><td>Frankfurt</td><td>Caddy, the Go web server, Postgres</td><td>ports 80 and 443, Caddy only</td></tr>
-      <tr><td>Ashburn-1</td><td>the worker (EDGAR poller, Temporal worker, calls to the Claude API) and two SSH tunnels</td><td>nothing; it only makes outgoing calls</td></tr>
+      <tr><td>Ashburn-1</td><td>the worker (EDGAR poller, Temporal worker, calls to the model's API) and two SSH tunnels</td><td>nothing; it only makes outgoing calls</td></tr>
       <tr><td>Ashburn-2</td><td>Temporal's single-binary server</td><td>nothing</td></tr>
     </table>
   </div>
@@ -113,7 +113,7 @@
     <div class="arch-wrap">
     <svg class="arch" viewBox="0 0 720 560" role="img" aria-labelledby="flow-title flow-desc">
       <title id="flow-title">Where the results go</title>
-      <desc id="flow-desc">The poller stores raw filings in Postgres and starts one Temporal workflow per tracked filing. The workflow runs triage now, plain rules for every filing and a Claude model for 8-Ks, and in stages 3 and 4 the analyst agent and next-day scoring, and writes the results to tables in the same Postgres, keyed by accession number. The website reads them together and shows them to visitors.</desc>
+      <desc id="flow-desc">The poller stores raw filings in Postgres and starts one Temporal workflow per tracked filing. The workflow runs triage now, plain rules for every filing and a language model for 8-Ks, and in stages 3 and 4 the analyst agent and next-day scoring, and writes the results to tables in the same Postgres, keyed by accession number. The website reads them together and shows them to visitors.</desc>
       <defs>
         <marker id="head2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M1 1 L9 5 L1 9 z" style="fill: var(--muted)"/>
@@ -174,13 +174,13 @@
   <h2>What happens to one filing</h2>
   <ol class="steps">
     <li><span class="n">1</span><div><b>Fetch.</b><p>Every minute the worker reads EDGAR's latest-filings feed, pages back until it reaches filings it already has, and stores each new one once, keyed by its accession number.</p></div><span class="pill live">stage 1, live</span></li>
-    <li><span class="n">2</span><div><b>Triage.</b><p>Plain rules read the 8-K item numbers (4.02 restatement, 2.02 earnings, 5.02 an executive leaving…) and label every filing high, medium, low or routine. Then a Claude model reads each 8-K and scores it from 0 to 100, with a one-sentence reason and a quote. The quote must appear word for word in the filing, or the score is dropped. The model can raise a label, never lower it, and a daily cap bounds the cost.</p></div><span class="pill live">stage 2, live</span></li>
+    <li><span class="n">2</span><div><b>Triage.</b><p>Plain rules read the 8-K item numbers (4.02 restatement, 2.02 earnings, 5.02 an executive leaving…) and label every filing high, medium, low or routine. Then a language model (DeepSeek by default, Claude as an option) reads each 8-K and scores it from 0 to 100, with a one-sentence reason and a quote. The quote must appear word for word in the filing, or the score is dropped. The model can raise a label, never lower it, and a daily cap bounds the cost.</p></div><span class="pill live">stage 2, live</span></li>
     <li><span class="n">3</span><div><b>Analyst agent.</b><p>For material filings: compare with the company's previous filing and write a short note on what changed.</p></div><span class="pill">stage 3</span></li>
     <li><span class="n">4</span><div><b>Check.</b><p>Every claim must cite a passage that really exists in the filing, or the note isn't published. Stage 2 already checks the model's one quote; stage 3 extends that to every claim in a note.</p></div><span class="pill">stage 3</span></li>
     <li><span class="n">5</span><div><b>Publish.</b><p>The note appears in the feed with links to the original filing on sec.gov.</p></div><span class="pill">stages 1–3</span></li>
     <li><span class="n">6</span><div><b>Score.</b><p>A Temporal workflow waits until after the next market close, fetches the price move, and checks the prediction. Scores are public.</p></div><span class="pill">stage 4</span></li>
   </ol>
-  <p class="muted" style="font-size:14px">Live today: stage 0 (the three servers, the deploy pipeline, the tunnels, the health checks), stage 1, <a href="/">the filing feed</a>, and stage 2, the rules and the Claude model that label it. Stages 3 and 4 come next.</p>
+  <p class="muted" style="font-size:14px">Live today: stage 0 (the three servers, the deploy pipeline, the tunnels, the health checks), stage 1, <a href="/">the filing feed</a>, and stage 2, the rules and the model that label it. Stages 3 and 4 come next.</p>
 
   <h2>Data sources</h2>
   <ul class="decisions">
@@ -194,6 +194,7 @@
     <li>Three servers with 1 GB of RAM each. <span>Go binaries use tens of MB and Temporal's single-binary server under 100 MB, so Kubernetes would cost more than everything else combined.</span></li>
     <li>No database port on the internet. <span>The worker reaches Postgres and Temporal through SSH tunnels; each tunnel key may open exactly one port on one machine.</span></li>
     <li>A model only where rules can't decide. <span>Item numbers and form types are rules; only 8-Ks go to the model, under a daily cap.</span></li>
+    <li>The model is swappable. <span>The workflow talks to one small interface (score, reason, quote), so DeepSeek and Claude are two implementations chosen by configuration. Filings are public data, so the choice is about cost and quality, not privacy.</span></li>
     <li>The model can raise a label, never lower it. <span>A restatement stays high even if the model shrugs; the model's job is to catch what rules can't read, like big news filed under 8.01 Other events.</span></li>
     <li>Every score carries a quote that's checked. <span>The quote must appear word for word in the filing, or the score is dropped. It's the first piece of stage 3's rule that every claim is cited and verified.</span></li>
     <li>Every claim is checked before it's published. <span>A note whose citation doesn't match the filing's text is retried or dropped.</span></li>
@@ -209,7 +210,7 @@ cmd/worker        <span class="c">EDGAR poller, Temporal worker and health repor
 internal/edgar    <span class="c">EDGAR client and feed parser</span>
 internal/ingest   <span class="c">one poll: page until overlap, then store</span>
 internal/triage   <span class="c">plain rules that label each filing</span>
-internal/model    <span class="c">the Claude call that scores an 8-K</span>
+internal/model    <span class="c">the model call (DeepSeek or Claude) that scores an 8-K</span>
 internal/pipeline <span class="c">the per-filing Temporal workflow and its dispatcher</span>
 internal/store    <span class="c">Postgres access and schema</span>
 internal/status   <span class="c">turns health reports into what the status page shows</span>

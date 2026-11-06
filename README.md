@@ -5,8 +5,9 @@ and checked against how the stock actually moved the next day.
 
 **Status: stage 2, triage.** Every minute the worker reads EDGAR's latest
 filings and stores each one once. Plain rules label every filing high, medium,
-low or routine from its form and 8-K item numbers; a Claude model then reads
-each 8-K and scores it, with a quote that must appear in the filing. The feed
+low or routine from its form and 8-K item numbers; a language model
+(DeepSeek by default, Claude as an option) then reads each 8-K and scores it,
+with a quote that must appear in the filing. The feed
 opens on the important ones. All three servers are deployed by one pipeline,
 and a status page shows the live health of every part.
 
@@ -46,6 +47,7 @@ flowchart TD
 - **No gaps.** A poll pages back until it reaches filings already stored (at most 5 pages), and stores only after paging stops: a Form 4's entries can straddle two pages, and storing page by page would stop too early.
 - **One Temporal workflow per tracked filing.** The workflow ID is the accession number, so Temporal refuses a second one while it runs. A dispatcher runs after every poll and starts a workflow for any filing without a label, so a crash or a Temporal outage heals by itself. Form 4s and other routine forms are labelled on the spot and never start one.
 - **Rules first, model second.** Rules are free and explainable, and they label everything. The model reads only 8-Ks, under a daily cap, and can raise a label but never lower it. Every score carries a quote that's checked against the filing; a quote that isn't there means the score is dropped.
+- **The model is swappable.** The workflow talks to one small interface (score, reason, quote); DeepSeek and Claude are two implementations sharing the prompt and the checks. Filings are public data, so the choice is about cost and quality.
 
 ## Deploying
 
@@ -64,8 +66,10 @@ which only accepts deploys from `main`:
 | Secret | `KNOWN_HOSTS_B64` | the three servers' host keys, so SSH can't be pointed at an impostor |
 | Secret | `POSTGRES_PASSWORD` | database password |
 | Secret | `EDGAR_USER_AGENT` | `Filing Radar <your email>`: SEC refuses requests without a contact |
-| Secret | `ANTHROPIC_API_KEY` | optional: without it the rules label everything on their own |
-| Variable | `TRIAGE_MODEL` | optional, default `claude-opus-5-5` |
+| Secret | `DEEPSEEK_API_KEY` | optional: the model that scores 8-Ks (default model `deepseek-chat`) |
+| Secret | `ANTHROPIC_API_KEY` | optional: Claude instead (default model `claude-opus-5-5`); with no key at all the rules label everything on their own |
+| Variable | `TRIAGE_PROVIDER` | optional: `deepseek` or `anthropic`; empty means whichever key is set, DeepSeek first |
+| Variable | `TRIAGE_MODEL` | optional: overrides the provider's default model |
 | Variable | `TRIAGE_MODEL_DAILY_CAP` | optional, default 200 model calls per UTC day |
 | Variable | `SITE_DOMAIN` | the site's name; Caddy gets its certificate |
 | Variable | `FRANKFURT_HOST`, `WORKER_HOST`, `TEMPORAL_HOST` | server IPs |
@@ -96,7 +100,7 @@ Tests: `go test ./...`. The store tests also run against Postgres when
 ## Roadmap
 
 1. **Live filing feed, no AI.** ✅ The worker polls EDGAR's latest-filings feed every minute, stores each filing once (keyed by its accession number), and the website shows the feed.
-2. **Triage.** ✅ Plain rules read each 8-K's item numbers and label every filing; a Claude model scores each 8-K with a checked quote and can raise the label.
+2. **Triage.** ✅ Plain rules read each 8-K's item numbers and label every filing; a language model scores each 8-K with a checked quote and can raise the label.
 3. **Analyst agent.** For material filings: what changed since the last filing, with a citation for every claim, and every citation checked against the filing's text.
 4. **Evals.** A Temporal workflow per filing sleeps until the next market close, fetches the price, and scores the prediction. Scores are public.
 5. **Live architecture page** with throughput, queue depth, agent time and cost.
@@ -110,7 +114,7 @@ internal/edgar   EDGAR client and feed parser
 internal/ingest  one poll: page until overlap, then store
 internal/triage  plain rules that label each filing
 internal/pipeline the per-filing Temporal workflow and its dispatcher
-internal/model   the Claude call that scores an 8-K, and the quote check
+internal/model   the model call (DeepSeek or Claude) that scores an 8-K, and the quote check
 internal/store   Postgres access and schema
 internal/status  turns health reports into what the status page shows
 internal/ping    the one-minute Temporal round trip

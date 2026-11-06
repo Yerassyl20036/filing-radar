@@ -61,7 +61,7 @@ func fakeAPI(t *testing.T, status int, answer string, stop string) (*Claude, *ma
 	t.Cleanup(srv.Close)
 	c := &Claude{
 		client: anthropic.NewClient(option.WithAPIKey("test"), option.WithBaseURL(srv.URL), option.WithMaxRetries(0)),
-		model:  DefaultModel,
+		model:  DefaultClaudeModel,
 	}
 	return c, &sent
 }
