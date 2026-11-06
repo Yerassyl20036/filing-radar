@@ -1,6 +1,6 @@
-# Ashburn-1 (oracle-ad3-fd3-1): the worker. Postgres (Frankfurt) and Temporal
-# (Ashburn-2) are reached through two SSH tunnels, so neither server has to
-# open a database port to the internet.
+# Ashburn-1 (oracle-ad3-fd3-1): the worker, which polls EDGAR. Postgres
+# (Frankfurt) and Temporal (Ashburn-2) are reached through two SSH tunnels, so
+# neither server has to open a database port to the internet.
 name: radar-worker
 
 services:
@@ -27,5 +27,8 @@ services:
       TEMPORAL_ADDRESS: temporal-tunnel:7233
       SERVER_NAME: ashburn-1
       TEMPORAL_SERVER_NAME: ashburn-2
+      # SEC requires a name and contact email; it's a secret so the email
+      # stays out of the public repo and the logs.
+      EDGAR_USER_AGENT: ${EDGAR_USER_AGENT:?}
     depends_on: [pg-tunnel, temporal-tunnel]
     mem_limit: 128m

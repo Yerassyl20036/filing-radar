@@ -1,6 +1,8 @@
 # Everything on your laptop, without tunnels:
+#   export EDGAR_USER_AGENT="Filing Radar you@example.com"
 #   docker compose -f deploy/local/compose.yml up --build
-# then open http://localhost:8088
+# then open http://localhost:8088. Without EDGAR_USER_AGENT the site runs and
+# the status page says the ingestor is waiting for it.
 name: radar-local
 
 services:
@@ -39,6 +41,8 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       SERVER_NAME: ashburn-1
       TEMPORAL_SERVER_NAME: ashburn-2
+      EDGAR_USER_AGENT: ${EDGAR_USER_AGENT:-}
+      EDGAR_BASE_URL: ${EDGAR_BASE_URL:-https://www.sec.gov}
     depends_on:
       postgres:
         condition: service_healthy
