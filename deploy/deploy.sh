@@ -5,6 +5,7 @@
 #   deploy/deploy.sh <folder> <host> [VAR ...]
 #
 # Each VAR is copied from this script's environment into the server's .env.
+# A VAR ending in "?" may be empty (an optional setting); the rest must be set.
 # SSH as the `deploy` user must already be set up (CI does that from secrets).
 set -euo pipefail
 
@@ -17,7 +18,12 @@ ssh "$host" "mkdir -p $remote"
 scp -q deploy/"$dir"/* "$host:$remote/"
 
 for var in "$@"; do
-  printf '%s=%s\n' "$var" "${!var:?$var is not set}"
+  if [[ $var == *\? ]]; then
+    var=${var%\?}
+    printf '%s=%s\n' "$var" "${!var:-}"
+  else
+    printf '%s=%s\n' "$var" "${!var:?$var is not set}"
+  fi
 done | ssh "$host" "umask 077 && cat > $remote/.env"
 
 # Our images live in a private registry; log in just long enough to pull.

@@ -1,5 +1,6 @@
 // Package status turns raw health signals into the components the status
-// page shows: the website, Postgres, the worker, Temporal and the ingestor.
+// page shows: the website, Postgres, the worker, Temporal, the ingestor and
+// triage.
 package status
 
 import (
@@ -22,6 +23,15 @@ const (
 const (
 	freshFor = 150 * time.Second
 	staleFor = 10 * time.Minute
+)
+
+// A filing normally gets its label within seconds, or a few minutes when SEC
+// is slow and the workflow retries. The dispatcher retries every minute, so a
+// filing still waiting after 10 minutes means labelling is falling behind,
+// and after 30 that it has stopped.
+const (
+	triageLateAfter    = 10 * time.Minute
+	triageStoppedAfter = 30 * time.Minute
 )
 
 type Component struct {
@@ -52,14 +62,16 @@ type IngestorDetail struct {
 
 // Build answers "is each part working?". The web server can only see its own
 // database directly; Temporal sits behind the worker, so its state comes from
-// the round trip the worker last reported.
-func Build(now time.Time, webServer string, dbErr error, dbLatency time.Duration, beats []store.Heartbeat) []Component {
+// the round trip the worker last reported. Triage is judged by its backlog,
+// read from the same database.
+func Build(now time.Time, webServer string, dbErr error, dbLatency time.Duration, beats []store.Heartbeat, backlog store.Backlog, backlogErr error) []Component {
 	comps := []Component{
 		{Name: "Website", Server: webServer, State: Up, Note: "answering requests"},
 		database(webServer, dbErr, dbLatency),
 	}
 	comps = append(comps, workerAndTemporal(now, find(beats, "worker"))...)
-	return append(comps, ingestor(now, find(beats, "ingestor")))
+	comps = append(comps, ingestor(now, find(beats, "ingestor")))
+	return append(comps, triageQueue(now, dbErr, backlog, backlogErr))
 }
 
 func find(beats []store.Heartbeat, service string) *store.Heartbeat {
@@ -144,6 +156,33 @@ func ingestor(now time.Time, beat *store.Heartbeat) Component {
 	if d.LastGapAt != nil && now.Sub(*d.LastGapAt) < 24*time.Hour {
 		c.Note += "; possible gap " + ago(now.Sub(*d.LastGapAt))
 	}
+	return c
+}
+
+// triageQueue shows whether labels keep up with new filings. It looks at the
+// age of the oldest unlabelled filing rather than the count: a burst at 4 pm
+// is a long queue that drains fine, while one stuck filing is a real problem.
+func triageQueue(now time.Time, dbErr error, b store.Backlog, err error) Component {
+	c := Component{Name: "Triage", Server: "ashburn-1"}
+	switch {
+	case dbErr != nil || err != nil:
+		c.State, c.Note = Down, "backlog unavailable"
+		return c
+	case b.Pending == 0:
+		c.State, c.Note = Up, "every filing labelled"
+		return c
+	}
+
+	age := now.Sub(b.Oldest)
+	switch {
+	case age > triageStoppedAfter:
+		c.State = Down
+	case age >= triageLateAfter:
+		c.State = Stale
+	default:
+		c.State = Up
+	}
+	c.Note = fmt.Sprintf("%s waiting, oldest %s", count(b.Pending, "filing"), ago(age))
 	return c
 }
 

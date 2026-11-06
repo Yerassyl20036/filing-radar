@@ -18,26 +18,36 @@
 
   <h1>Latest SEC filings</h1>
   <p class="lead">
-    Every new filing on EDGAR, about a minute after SEC accepts it. This is stage 1: the raw feed, stored once per filing.
-    AI notes on what changed come in stage 3. <a href="/how-it-works">How it's built</a>.
+    Every new filing on EDGAR, about a minute after SEC accepts it. Plain rules label every filing high, medium, low or routine,
+    and a Claude model scores 8-Ks, with a quote that's checked against the filing. Important shows medium and up.
+    Notes on what changed come in stage 3. <a href="/how-it-works">How it's built</a>.
   </p>
 
   <div class="feed-bar">
-    <div class="chips" id="chips" role="group" aria-label="Show one form type">
-      <button class="chip" data-form="" aria-pressed="true">All</button>
-      <button class="chip" data-form="8-K" aria-pressed="false">8-K</button>
-      <button class="chip" data-form="10-Q" aria-pressed="false">10-Q</button>
-      <button class="chip" data-form="10-K" aria-pressed="false">10-K</button>
-      <button class="chip" data-form="4" aria-pressed="false">4</button>
-      <button class="chip" data-form="144" aria-pressed="false">144</button>
-      <button class="chip" data-form="S-1" aria-pressed="false">S-1</button>
+    <div class="filters">
+      <div class="switch" id="view" role="group" aria-label="How important">
+        <button class="chip" data-view="important" aria-pressed="true" title="Filings labelled medium or high">Important</button>
+        <button class="chip" data-view="all" aria-pressed="false">All</button>
+      </div>
+      <div class="chips" id="chips" role="group" aria-label="Show one form type">
+        <button class="chip" data-form="" aria-pressed="true">All</button>
+        <button class="chip" data-form="8-K" aria-pressed="false">8-K</button>
+        <button class="chip" data-form="10-Q" aria-pressed="false">10-Q</button>
+        <button class="chip" data-form="10-K" aria-pressed="false">10-K</button>
+        <button class="chip" data-form="4" aria-pressed="false">4</button>
+        <button class="chip" data-form="144" aria-pressed="false">144</button>
+        <button class="chip" data-form="S-1" aria-pressed="false">S-1</button>
+      </div>
     </div>
     <div class="live" id="live"><span class="dot"></span><span id="live-text">Checking the ingestor…</span></div>
   </div>
 
   <div class="banner" id="banner">The feed isn't answering. Retrying…</div>
   <ol class="feed" id="feed" aria-live="polite"></ol>
-  <p class="empty card" id="empty" hidden></p>
+  <div class="empty card" id="empty" hidden>
+    <p id="empty-text"></p>
+    <button class="more" id="show-all" hidden>Show all filings</button>
+  </div>
   <button class="more" id="more" hidden>Load older filings</button>
 
   <footer>
@@ -47,9 +57,15 @@
 </main>
 <script>
   const PAGE = 50;
+  const VIEW_KEY = 'feed-view';
+  const LEVELS = ['high', 'medium', 'low', 'routine'];
   const feedEl = document.getElementById('feed');
   const emptyEl = document.getElementById('empty');
+  const emptyText = document.getElementById('empty-text');
+  const showAllEl = document.getElementById('show-all');
   const moreEl = document.getElementById('more');
+  const viewEl = document.getElementById('view');
+  const chipsEl = document.getElementById('chips');
   const banner = document.getElementById('banner');
   const liveDot = document.querySelector('#live .dot');
   const liveText = document.getElementById('live-text');
@@ -59,9 +75,28 @@
   const full = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'medium' });
 
   let form = '';
+  let view = savedView();
   let next = '';
-  let gen = 0; // bumps when the filter changes, so late answers for the old filter are dropped
-  const seen = new Set();
+  let gen = 0; // bumps when a filter changes, so late answers for the old filter are dropped
+  // Rows on screen by accession number, with the label each was drawn with,
+  // so a refresh redraws only the rows whose label changed.
+  const shown = new Map();
+
+  // Storage can throw (private browsing, blocked site data). The choice then
+  // lasts for this visit only.
+  function savedView() {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'all' ? 'all' : 'important';
+    } catch {
+      return 'important';
+    }
+  }
+
+  // Important is medium and up. Routine forms (insider trades, planned sales)
+  // are most of EDGAR and would bury the filings that move a stock.
+  function params(extra) {
+    return { form, level: view === 'important' ? 'medium' : '', limit: PAGE, ...extra };
+  }
 
   async function api(params) {
     const r = await fetch('/api/filings?' + new URLSearchParams(params), { cache: 'no-store' });
@@ -85,11 +120,49 @@
     return 'by ' + shown + (unique.length > 2 ? ` and ${unique.length - 2} more` : '');
   }
 
+  // A label changes when the worker first decides it, redoes it with newer
+  // rules, or the model's score lands after the rules' label.
+  function labelKey(f) {
+    const tr = f.triage;
+    return tr ? [tr.level, tr.decided_at, scored(tr) ? tr.model_score : ''].join(' ') : '';
+  }
+
+  // Only 8-Ks are scored, under a daily cap, so most labels have no score.
+  function scored(tr) {
+    return !!tr && typeof tr.model_score === 'number';
+  }
+
+  // The model's score and one-sentence reason, then the passage it quoted.
+  // The worker has checked the quote appears word for word in the filing.
+  function modelLine(tr) {
+    const box = el('div', 'model');
+    const line = el('div', 'ai');
+    const score = el('span', 'score', 'AI ' + tr.model_score);
+    score.title = (tr.model ? tr.model + ' · ' : '') + 'score from 0 to 100';
+    line.append(score);
+    if (tr.model_reason) line.append(el('span', 'model-why', tr.model_reason));
+    box.append(line);
+    if (tr.model_quote) {
+      const q = el('blockquote', 'quote', tr.model_quote);
+      q.title = tr.model_quote;
+      box.append(q);
+    }
+    return box;
+  }
+
   function row(f, isNew) {
     const li = el('li', 'filing' + (isNew ? ' new' : ''));
     li.dataset.acc = f.accession_no;
+    li.dataset.at = Date.parse(f.accepted_at);
 
     li.append(el('span', 'form', f.form_type));
+
+    const tr = f.triage;
+    if (tr) {
+      li.append(el('span', LEVELS.includes(tr.level) ? 'level ' + tr.level : 'level', tr.level));
+    } else {
+      li.append(el('span', 'level pending', 'labelling…'));
+    }
 
     const who = el('div', 'who');
     const a = el('a', '', f.company || f.accession_no);
@@ -99,6 +172,22 @@
     const by = others(f);
     if (by) who.append(el('span', 'by', by));
     li.append(who);
+
+    const reasons = (tr && tr.reasons) || [];
+    if (reasons.length) {
+      // A raise explains the level, so it never hides behind "+N more".
+      const raise = reasons.findIndex(r => r.startsWith('raised by the model'));
+      const lead = raise > 1 ? [reasons[0], reasons[raise]] : reasons.slice(0, 2);
+      const more = reasons.length > 2 ? ` · +${reasons.length - 2} more` : '';
+      const why = el('div', 'why', lead.join(' · ') + more);
+      why.title = reasons.join('\n');
+      li.append(why);
+    }
+
+    if (scored(tr)) {
+      li.classList.add('scored');
+      li.append(modelLine(tr));
+    }
 
     const at = new Date(f.accepted_at);
     const lag = Math.max(0, Math.round((new Date(f.first_seen_at) - at) / 1000));
@@ -110,33 +199,72 @@
     return li;
   }
 
-  function show(filings, where) {
-    const rows = [];
-    for (const f of filings) {
-      if (seen.has(f.accession_no)) continue;
-      seen.add(f.accession_no);
-      rows.push(row(f, where === 'top'));
+  // Labels land out of order (one filing's details can take longer than a
+  // newer one's), so a filing can join the Important view after newer ones
+  // are on screen. A new row goes where its time puts it, not simply on top.
+  function place(li, f) {
+    const at = Date.parse(f.accepted_at);
+    for (const other of feedEl.children) {
+      const t = Number(other.dataset.at);
+      if (at > t || (at === t && f.accession_no > other.dataset.acc)) {
+        other.before(li);
+        return;
+      }
     }
-    if (where === 'top') feedEl.prepend(...rows); else feedEl.append(...rows);
-    return rows.length;
+    feedEl.append(li);
+  }
+
+  function show(filings, where) {
+    let added = 0;
+    for (const f of filings) {
+      const had = shown.get(f.accession_no);
+      if (had) {
+        relabel(had, f);
+        continue;
+      }
+      const li = row(f, where === 'top');
+      shown.set(f.accession_no, { li, key: labelKey(f) });
+      if (where === 'top') place(li, f); else feedEl.append(li);
+      added++;
+    }
+    return added;
+  }
+
+  // Redraws a row whose label changed since it was drawn. Only the newest page
+  // is refreshed, which is where labels are still arriving.
+  function relabel(had, f) {
+    const key = labelKey(f);
+    if (key === had.key) return;
+    const li = row(f, false);
+    had.li.replaceWith(li);
+    had.li = li;
+    had.key = key;
   }
 
   function settle() {
-    const none = seen.size === 0;
+    const none = shown.size === 0;
     emptyEl.hidden = !none;
-    emptyEl.textContent = form
-      ? `No ${form} filings stored yet. They appear here within a minute of EDGAR accepting one.`
-      : 'No filings stored yet. The worker polls EDGAR every minute.';
+    const important = view === 'important';
+    if (important) {
+      emptyText.textContent = form
+        ? `No ${form} filings labelled medium or high yet.`
+        : 'No important filings yet. EDGAR is quiet outside New York business hours.';
+    } else {
+      emptyText.textContent = form
+        ? `No ${form} filings stored yet. They appear here within a minute of EDGAR accepting one.`
+        : 'No filings stored yet. The worker polls EDGAR every minute.';
+    }
+    showAllEl.hidden = !important;
     moreEl.hidden = !next;
   }
 
   async function reset() {
     const mine = ++gen;
     try {
-      const data = await api({ form, limit: PAGE });
+      const data = await api(params());
       if (mine !== gen) return;
       feedEl.replaceChildren();
-      seen.clear();
+      shown.clear();
       show(data.filings, 'bottom');
       next = data.next;
       banner.style.display = 'none';
@@ -149,13 +277,13 @@
   async function refresh() {
     const mine = gen;
     try {
-      const data = await api({ form, limit: PAGE });
+      const data = await api(params());
       if (mine !== gen) return;
-      const unseen = data.filings.filter(f => !seen.has(f.accession_no));
+      const unseen = data.filings.filter(f => !shown.has(f.accession_no));
       // A whole page of new rows means there may be more between them and
       // what's shown; start over rather than leave a hole.
-      if (seen.size > 0 && unseen.length === data.filings.length && data.next) return reset();
-      if (seen.size === 0) next = data.next;
+      if (shown.size > 0 && unseen.length === data.filings.length && data.next) return reset();
+      if (shown.size === 0) next = data.next;
       show(data.filings, 'top');
       banner.style.display = 'none';
       settle();
@@ -168,7 +296,7 @@
     const mine = gen;
     moreEl.disabled = true;
     try {
-      const data = await api({ form, limit: PAGE, before: next });
+      const data = await api(params({ before: next }));
       if (mine === gen) {
         show(data.filings, 'bottom');
         next = data.next;
@@ -180,11 +308,38 @@
     settle();
   });
 
-  document.getElementById('chips').addEventListener('click', e => {
+  function pressView() {
+    for (const b of viewEl.querySelectorAll('.chip')) b.setAttribute('aria-pressed', b.dataset.view === view ? 'true' : 'false');
+  }
+
+  function setView(v) {
+    view = v;
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // Not remembered; see savedView.
+    }
+    pressView();
+    next = '';
+    reset();
+  }
+
+  viewEl.addEventListener('click', e => {
+    const b = e.target.closest('.chip');
+    if (b) setView(b.dataset.view);
+  });
+
+  showAllEl.addEventListener('click', () => {
+    setView('all');
+    // The button hides once rows arrive, so keep focus on the switch.
+    viewEl.querySelector('[data-view="all"]').focus();
+  });
+
+  chipsEl.addEventListener('click', e => {
     const b = e.target.closest('.chip');
     if (!b) return;
     form = b.dataset.form;
-    for (const c of document.querySelectorAll('.chip')) c.setAttribute('aria-pressed', c === b ? 'true' : 'false');
+    for (const c of chipsEl.querySelectorAll('.chip')) c.setAttribute('aria-pressed', c === b ? 'true' : 'false');
     next = '';
     reset();
   });
@@ -204,6 +359,7 @@
     }
   }
 
+  pressView();
   reset();
   ingestor();
   setInterval(refresh, 10000);

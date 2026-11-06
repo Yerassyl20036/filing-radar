@@ -111,11 +111,18 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	dbErr := s.store.Ping(ctx)
 	latency := time.Since(start)
 
-	var beats []store.Heartbeat
+	var (
+		beats      []store.Heartbeat
+		backlog    store.Backlog
+		backlogErr error
+	)
 	if dbErr == nil {
 		var err error
 		if beats, err = s.store.Heartbeats(ctx); err != nil {
 			slog.Error("read heartbeats", "err", err)
+		}
+		if backlog, backlogErr = s.store.TriageBacklog(ctx); backlogErr != nil {
+			slog.Error("read triage backlog", "err", backlogErr)
 		}
 	}
 
@@ -123,7 +130,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"checked_at": time.Now().UTC(),
-		"components": status.Build(time.Now(), s.name, dbErr, latency, beats),
+		"components": status.Build(time.Now(), s.name, dbErr, latency, beats, backlog, backlogErr),
 	})
 }
 

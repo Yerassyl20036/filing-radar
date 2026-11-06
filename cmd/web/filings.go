@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Yerassyl20036/filing-radar/internal/store"
+	"github.com/Yerassyl20036/filing-radar/internal/triage"
 )
 
 const (
@@ -19,8 +20,8 @@ const (
 	maxLimit     = 100
 )
 
-// filings serves GET /api/filings?form=8-K&limit=50&before=<cursor>, newest
-// first. "next" is the cursor for the following page, or "" at the end.
+// filings serves GET /api/filings?form=8-K&level=medium&limit=50&before=<cursor>,
+// newest first. "next" is the cursor for the following page, or "" at the end.
 func (s *server) filings(w http.ResponseWriter, r *http.Request) {
 	q, err := parseFilingQuery(r)
 	if err != nil {
@@ -63,6 +64,20 @@ func parseFilingQuery(r *http.Request) (store.FilingQuery, error) {
 			return q, errors.New("limit must be a number from 1 to 100")
 		}
 		q.Limit = n
+	}
+	if s := v.Get("level"); s != "" {
+		floor, ok := triage.ParseLevel(s)
+		if !ok {
+			return q, errors.New("level must be high, medium, low or routine")
+		}
+		// Asking for a level means "at least this important", which is what
+		// a reader filtering out noise wants. Pending filings have no level,
+		// so any level leaves them out.
+		for _, l := range []triage.Level{triage.High, triage.Medium, triage.Low, triage.Routine} {
+			if l.AtLeast(floor) {
+				q.Levels = append(q.Levels, string(l))
+			}
+		}
 	}
 	if s := v.Get("before"); s != "" {
 		c, err := decodeCursor(s)

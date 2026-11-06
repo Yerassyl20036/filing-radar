@@ -77,14 +77,19 @@ footer { margin-top: 44px; color: var(--muted); font-size: 13px; }
 
 /* Feed page */
 .feed-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font: inherit; font-size: 13px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); cursor: pointer; }
 .chip:hover { color: var(--text); }
 .chip[aria-pressed="true"] { color: var(--text); border-color: var(--text); font-weight: 550; }
+/* The view switch is one choice between two, so its chips share an outline, apart from the form chips. */
+.switch { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--soft); }
+.switch .chip { border-color: transparent; background: transparent; }
+.switch .chip[aria-pressed="true"] { border-color: var(--text); background: var(--card); }
 .live { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .feed { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .feed:empty { display: none; }
-.filing { display: grid; grid-template-columns: 128px 1fr auto; grid-template-areas: "form who time"; gap: 4px 14px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); }
+.filing { display: grid; grid-template-columns: 128px 1fr auto; grid-template-areas: "form who time" "level why time"; gap: 4px 14px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); }
 .filing:first-child { border-top: 0; }
 .filing.new { animation: arrive 3s ease-out; }
 @keyframes arrive { from { background: color-mix(in srgb, var(--accent) 16%, transparent); } to { background: transparent; } }
@@ -94,11 +99,31 @@ footer { margin-top: 44px; color: var(--muted); font-size: 13px; }
 .who a { color: var(--text); font-weight: 550; text-decoration: none; overflow-wrap: anywhere; }
 .who a:hover { text-decoration: underline; }
 .by { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.level { grid-area: level; justify-self: start; padding: 0 8px; border: 1px solid currentColor; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.5; }
+.level.high { color: var(--down); }
+.level.medium { color: var(--stale); }
+.level.low { color: var(--muted); }
+/* Routine is most of EDGAR (insider trades, planned sales), so it stays quiet. */
+.level.routine { color: var(--muted); border-color: var(--line); font-size: 11px; font-weight: 500; opacity: .8; }
+.level.pending { color: var(--muted); border-color: transparent; padding: 0; font-weight: 400; opacity: .7; }
+.why { grid-area: why; min-width: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+/* Only scored rows get the model's row, so unscored rows keep their height. */
+.filing.scored { grid-template-areas: "form who time" "level why time" ". model model"; }
+.model { grid-area: model; min-width: 0; font-size: 13px; }
+.ai { display: flex; align-items: baseline; gap: 8px; }
+.score { flex: none; padding: 0 6px; border: 1px solid currentColor; border-radius: 6px; color: var(--accent); font-size: 12px; font-weight: 600; line-height: 1.5; font-variant-numeric: tabular-nums; cursor: help; }
+.model-why { min-width: 0; overflow-wrap: anywhere; }
+/* The passage the model quoted: quieter than its reason, two lines at most. */
+.quote { margin: 4px 0 0; padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); font-style: italic; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .filing time { grid-area: time; text-align: right; font-size: 13px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .filing time b { display: block; color: var(--text); font-weight: 550; }
 @media (max-width: 640px) {
-  .filing { grid-template-columns: 1fr auto; grid-template-areas: "form time" "who who"; padding: 10px 14px; }
+  .filing { grid-template-columns: auto 1fr auto; grid-template-areas: "form level time" "who who who" "why why why"; padding: 10px 14px; }
+  .filing.scored { grid-template-areas: "form level time" "who who who" "why why why" "model model model"; }
 }
 .empty { color: var(--muted); text-align: center; padding: 28px 18px; }
+.empty p { margin: 0; }
 .more { display: block; margin: 16px auto 0; font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
 .more:disabled { opacity: .6; cursor: progress; }
+.more[hidden] { display: none; } /* display: block above would otherwise beat the hidden attribute */

@@ -26,6 +26,15 @@ func states(comps []Component) map[string]State {
 	return m
 }
 
+func named(comps []Component, name string) Component {
+	for _, c := range comps {
+		if c.Name == name {
+			return c
+		}
+	}
+	return Component{}
+}
+
 func TestBuild(t *testing.T) {
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	ok := WorkerDetail{TemporalServer: "ashburn-2", TemporalOK: true, TemporalMS: 42}
@@ -52,7 +61,7 @@ func TestBuild(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := states(Build(now, "frankfurt-1", tt.dbErr, 3*time.Millisecond, tt.beats))
+			got := states(Build(now, "frankfurt-1", tt.dbErr, 3*time.Millisecond, tt.beats, store.Backlog{}, nil))
 			for name, want := range tt.want {
 				if got[name] != want {
 					t.Errorf("%s = %q, want %q", name, got[name], want)
@@ -92,10 +101,43 @@ func TestBuildIngestor(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			comps := Build(now, "frankfurt-1", nil, time.Millisecond, tt.beats)
-			got := comps[len(comps)-1]
+			got := named(Build(now, "frankfurt-1", nil, time.Millisecond, tt.beats, store.Backlog{}, nil), "Ingestor")
 			if got.Name != "Ingestor" || got.State != tt.want || got.Note != tt.wantNote {
 				t.Errorf("got %s %s %q, want %s %q", got.Name, got.State, got.Note, tt.want, tt.wantNote)
+			}
+		})
+	}
+}
+
+func TestBuildTriage(t *testing.T) {
+	now := time.Date(2026, 11, 6, 16, 0, 0, 0, time.UTC)
+	waiting := func(n int, age time.Duration) store.Backlog {
+		return store.Backlog{Pending: n, Oldest: now.Add(-age)}
+	}
+	tests := []struct {
+		name       string
+		dbErr      error
+		backlog    store.Backlog
+		backlogErr error
+		want       State
+		wantNote   string
+	}{
+		{"database down", errors.New("refused"), store.Backlog{}, nil, Down, "backlog unavailable"},
+		{"backlog query failed", nil, store.Backlog{}, errors.New("timeout"), Down, "backlog unavailable"},
+		{"nothing waiting", nil, store.Backlog{}, nil, Up, "every filing labelled"},
+		{"a few just in", nil, waiting(3, 2*time.Minute), nil, Up, "3 filings waiting, oldest 2 min ago"},
+		{"one just in", nil, waiting(1, 40*time.Second), nil, Up, "1 filing waiting, oldest 40 s ago"},
+		{"falling behind", nil, waiting(12, 10*time.Minute), nil, Stale, "12 filings waiting, oldest 10 min ago"},
+		{"still behind at 30 min", nil, waiting(12, 30*time.Minute), nil, Stale, "12 filings waiting, oldest 30 min ago"},
+		{"stopped", nil, waiting(40, 45*time.Minute), nil, Down, "40 filings waiting, oldest 45 min ago"},
+		{"stopped for hours", nil, waiting(400, 3*time.Hour), nil, Down, "400 filings waiting, oldest 3.0 h ago"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			comps := Build(now, "frankfurt-1", tt.dbErr, time.Millisecond, nil, tt.backlog, tt.backlogErr)
+			got := comps[len(comps)-1] // the status page lists triage last, after the ingestor
+			if got.Name != "Triage" || got.Server != "ashburn-1" || got.State != tt.want || got.Note != tt.wantNote {
+				t.Errorf("got %s on %s %s %q, want Triage on ashburn-1 %s %q", got.Name, got.Server, got.State, got.Note, tt.want, tt.wantNote)
 			}
 		})
 	}
