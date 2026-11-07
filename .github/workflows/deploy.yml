@@ -70,9 +70,9 @@ jobs:
       MODEL_PRICE_IN_PER_M: ${{ vars.MODEL_PRICE_IN_PER_M }}
       MODEL_PRICE_OUT_PER_M: ${{ vars.MODEL_PRICE_OUT_PER_M }}
       SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
-      FRANKFURT_HOST: ${{ vars.FRANKFURT_HOST }}
-      WORKER_HOST: ${{ vars.WORKER_HOST }}
-      TEMPORAL_HOST: ${{ vars.TEMPORAL_HOST }}
+      FRANKFURT_HOST: ${{ secrets.FRANKFURT_HOST }}
+      WORKER_HOST: ${{ secrets.WORKER_HOST }}
+      TEMPORAL_HOST: ${{ secrets.TEMPORAL_HOST }}
     steps:
       - uses: actions/checkout@v4
 
@@ -118,7 +118,8 @@ jobs:
             if [ "$row" = "true" ]; then echo "worker → Postgres and worker → Temporal both OK"; exit 0; fi
             echo "waiting for the worker (attempt $i)…"; sleep 10
           done
-          ssh "$WORKER_HOST" "cd /opt/filing-radar/ashburn-worker && docker compose logs --tail 40"
+          # Logs stay on the server: this repository's Actions logs are public.
+          ssh "$WORKER_HOST" "cd /opt/filing-radar/ashburn-worker && docker compose ps --format '{{.Service}}: {{.Status}}'"
           exit 1
 
       # The new worker polls EDGAR as soon as it starts, so wait for a report

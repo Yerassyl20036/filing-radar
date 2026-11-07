@@ -15,20 +15,22 @@ held to a daily budget. The feed opens on the important ones. All three
 servers are deployed by one pipeline, and a status page shows the live health
 of every part.
 
+This repository is public: https://github.com/Yerassyl20036/filing-radar.
+
 ## Architecture
 
 ```mermaid
 flowchart TD
-    subgraph FRA["Frankfurt (oracle-ad2-fd1)"]
+    subgraph FRA["Frankfurt"]
         CADDY["Caddy<br/>HTTPS"] --> WEB["web<br/>Go"]
         WEB --> PG[("Postgres 16")]
     end
     EDGAR["SEC EDGAR<br/>latest filings"]
-    subgraph AS1["Ashburn-1 (oracle-ad3-fd3-1)"]
+    subgraph AS1["Ashburn-1"]
         WORKER["worker<br/>EDGAR poller + Temporal worker"] --> T1["pg-tunnel"]
         WORKER --> T2["temporal-tunnel"]
     end
-    subgraph AS2["Ashburn-2 (oracle-ad3-fd3-2)"]
+    subgraph AS2["Ashburn-2"]
         TEMPORAL["Temporal server<br/>single binary, SQLite"]
     end
     USER["Visitors"] --> CADDY
@@ -82,7 +84,7 @@ which only accepts deploys from `main`:
 | Variable | `ANALYST_DAILY_CAP` | optional, default 30 notes per UTC day |
 | Variable | `MODEL_PRICE_IN_PER_M`, `MODEL_PRICE_OUT_PER_M` | optional, set both or neither: the model's price in US$ per million input and output tokens, when the built-in list price is out of date |
 | Variable | `SITE_DOMAIN` | the site's name; Caddy gets its certificate |
-| Variable | `FRANKFURT_HOST`, `WORKER_HOST`, `TEMPORAL_HOST` | server IPs |
+| Secret | `FRANKFURT_HOST`, `WORKER_HOST`, `TEMPORAL_HOST` | server IPs; secrets, so the public Actions logs show them as *** |
 
 To move to a real domain, point its A record at the Frankfurt IP, change
 `SITE_DOMAIN`, and deploy again.
@@ -105,7 +107,31 @@ Tests: `go test ./...`. The store tests also run against Postgres when
 |---|---|
 | `GET /api/filings?form=8-K&level=medium&limit=50&before=<cursor>` | filings newest first, each with its `triage` label (null while pending) and its published analyst `note` (null when there is none: headline, claims each with `text`, `quote`, `source` and `url`); `level` means that level and above; `next` is the cursor for the following page |
 | `GET /api/status` | the health of every part, as the status page shows it |
+| `GET /api/costs` | model spend from the `model_calls` table: `all_time` and `today` (since midnight UTC), each with `usd`, `calls`, `input_tokens`, `output_tokens` and `since` (the first call, null when there are none), plus `by_purpose` (`score`, `draft`, `repair`) |
 | `GET /healthz` | `ok` when the web server can reach Postgres |
+
+## What it costs
+
+**Running.** The three servers are Oracle Cloud free-tier VMs ($0), the
+domain is sslip.io ($0), and SEC EDGAR data is free. The only running cost is
+the language model: every call is recorded with its tokens and cost, the live
+totals are on the site's How it works page (`/how-it-works#costs`) and at
+`GET /api/costs`, and a daily budget
+(`MODEL_DAILY_BUDGET_USD`, $0.20 by default) caps it.
+
+**Development.** Built in about three days with Claude Code (Claude Opus 5.5,
+a little Claude Haiku 5.5) as the main developer under the owner's direction.
+Measured from the session transcripts: about 1.0 million output tokens and
+219 million cached-context tokens across 710 model responses, roughly $82 at
+Anthropic's API list prices. It was paid through a Claude subscription, not
+per token, so that figure is the list-price equivalent, not a bill.
+
+**Built with:** [Temporal](https://docs.temporal.io/),
+[DeepSeek API](https://api-docs.deepseek.com/),
+[SEC EDGAR APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces),
+[Go](https://go.dev/), [PostgreSQL](https://www.postgresql.org/),
+[Caddy](https://caddyserver.com/),
+[Oracle Cloud Free Tier](https://www.oracle.com/cloud/free/).
 
 ## Roadmap
 

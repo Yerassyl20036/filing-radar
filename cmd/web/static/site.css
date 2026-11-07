@@ -144,3 +144,19 @@ footer { margin-top: 44px; color: var(--muted); font-size: 13px; }
 .more { display: block; margin: 16px auto 0; font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
 .more:disabled { opacity: .6; cursor: progress; }
 .more[hidden] { display: none; } /* display: block above would otherwise beat the hidden attribute */
+
+/* Feed intro: what this is, and where to read more */
+.intro { margin: 0 0 24px; }
+.intro .lead { margin-bottom: 8px; }
+.intro-links { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0; font-size: 14px; }
+
+/* How it works: costs */
+table.costs td.num, table.costs th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.costs tr.sub td:first-child { padding-left: 24px; color: var(--muted); }
+.costs-note { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+h3 { font-size: 15px; font-weight: 600; margin: 22px 0 8px; }
+@media (max-width: 640px) {
+  table.costs th, table.costs td { padding: 8px 6px; }
+  table.costs td.num { white-space: normal; }
+  table.costs tr.sub td:first-child { padding-left: 14px; }
+}

@@ -1,9 +1,9 @@
-# Ashburn-2 (oracle-ad3-fd3-2): Temporal's single-binary server. It keeps
+# Ashburn-2: Temporal's single-binary server. It keeps
 # workflow state in a SQLite file and listens on localhost only; the worker
 # reaches it through an SSH tunnel as the restricted `tunnel` user.
 #
 # The web UI is on 8233. To look at it from your Mac:
-#   ssh -L 8233:127.0.0.1:8233 oracle-ad3-fd3-2-ashburn   then open http://localhost:8233
+#   ssh -L 8233:127.0.0.1:8233 <ashburn-2 host>  then open http://localhost:8233
 name: radar-temporal
 
 services:

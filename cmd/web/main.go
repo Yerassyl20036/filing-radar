@@ -51,6 +51,7 @@ func main() {
 	routePages(mux)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /api/status", s.status)
+	mux.HandleFunc("GET /api/costs", s.costs)
 	mux.HandleFunc("GET /api/filings", s.filings)
 
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}

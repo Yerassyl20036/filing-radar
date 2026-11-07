@@ -13,7 +13,7 @@ dir=$1 host=$2
 shift 2
 remote=/opt/filing-radar/$dir
 
-echo "::group::deploy $dir to $host"
+echo "::group::deploy $dir"
 ssh "$host" "mkdir -p $remote"
 scp -q deploy/"$dir"/* "$host:$remote/"
 

@@ -1,4 +1,4 @@
-# Frankfurt (oracle-ad2-fd1): Postgres, the website and Caddy for HTTPS.
+# Frankfurt: Postgres, the website and Caddy for HTTPS.
 # Postgres listens on localhost only; the worker reaches it through an SSH
 # tunnel as the restricted `tunnel` user.
 name: radar

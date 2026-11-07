@@ -17,12 +17,18 @@
   </nav>
 
   <h1>Latest SEC filings</h1>
-  <p class="lead">
-    Every new filing on EDGAR, about a minute after SEC accepts it. Plain rules label every filing high, medium, low or routine,
-    and a language model (DeepSeek by default, Claude as an option) scores 8-Ks, with a quote that's checked against the filing. Important shows medium and up.
-    High-importance 8-Ks get a short note on what changed since the company's previous one, and every claim in it quotes its source, checked word for word.
-    <a href="/how-it-works">How it's built</a>.
-  </p>
+  <div class="intro">
+    <p class="lead">
+      Filing radar reads every new SEC filing within about a minute of EDGAR accepting it and labels it high, medium, low or routine with plain rules.
+      A language model scores each 8-K and writes a short note on the important ones; every claim in a note quotes the filing, and code checks each quote word for word.
+      It's a side project showing a reliable AI pipeline running on three free 1 GB servers. Important shows medium and up.
+    </p>
+    <p class="intro-links">
+      <a href="/how-it-works">How it works</a>
+      <a href="/how-it-works#costs">What it costs</a>
+      <a href="https://github.com/Yerassyl20036/filing-radar">Source on GitHub</a>
+    </p>
+  </div>
 
   <div class="feed-bar">
     <div class="filters">

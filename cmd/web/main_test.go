@@ -18,6 +18,8 @@ func TestPages(t *testing.T) {
 		{"/", "text/html", "Latest SEC filings"},
 		{"/status", "text/html", "System status"},
 		{"/how-it-works", "text/html", "What happens to one filing"},
+		{"/how-it-works", "text/html", `id="costs"`},
+		{"/", "text/html", "/how-it-works#costs"},
 		{"/static/site.css", "text/css", "--up"},
 	}
 	for _, tt := range tests {

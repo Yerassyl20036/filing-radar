@@ -274,6 +274,47 @@
     <li>Deploys by hand, from <code>main</code> only. <span>The pipeline ends by proving the worker reached both other servers.</span></li>
   </ul>
 
+  <h2 id="costs">What it costs</h2>
+  <h3>Running</h3>
+  <div class="card table-wrap">
+    <table class="servers costs">
+      <thead><tr><th>Item</th><th class="num">All time</th><th class="num">Today (UTC)</th></tr></thead>
+      <tbody id="cost-rows">
+        <tr><td>Language model</td><td class="num" colspan="2">Loading…</td></tr>
+      </tbody>
+      <tbody>
+        <tr><td>Servers: 3 Oracle Cloud free-tier VMs</td><td class="num">$0</td><td class="num">$0</td></tr>
+        <tr><td>Domain: sslip.io</td><td class="num">$0</td><td class="num">$0</td></tr>
+        <tr><td>SEC EDGAR data</td><td class="num">free</td><td class="num">free</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="costs-note" id="cost-since">
+    The model figures are live, summed from every recorded call.
+  </p>
+  <p class="costs-note">
+    A daily model budget (<code>MODEL_DAILY_BUDGET_USD</code>, $0.20 by default) caps running cost: once it's spent, model calls stop until midnight UTC and the rules' labels stand.
+  </p>
+
+  <h3>Development</h3>
+  <p>
+    Built in about three days with Claude Code (Claude Opus 5.5, with a little Claude Haiku 5.5) as the main developer, under the owner's direction.
+    Measured from the session transcripts: about 1.0 million output tokens and 219 million cached-context tokens across 710 model responses,
+    roughly $82 at Anthropic's API list prices. It was paid through a Claude subscription, not per token, so the $82 is what the same work
+    would cost at list rates, not what was billed.
+  </p>
+
+  <h3>Built with</h3>
+  <ul class="decisions">
+    <li><a href="https://docs.temporal.io/">Temporal</a> <span>— durable workflows for each filing and note.</span></li>
+    <li><a href="https://api-docs.deepseek.com/">DeepSeek API</a> <span>— the default language model.</span></li>
+    <li><a href="https://www.sec.gov/search-filings/edgar-application-programming-interfaces">SEC EDGAR APIs</a> <span>— the filings themselves.</span></li>
+    <li><a href="https://go.dev/">Go</a> <span>— the web server and the worker.</span></li>
+    <li><a href="https://www.postgresql.org/">PostgreSQL</a> <span>— filings, labels, notes and model calls.</span></li>
+    <li><a href="https://caddyserver.com/">Caddy</a> <span>— HTTPS in front of the website.</span></li>
+    <li><a href="https://www.oracle.com/cloud/free/">Oracle Cloud Free Tier</a> <span>— the three servers.</span></li>
+  </ul>
+
   <h2>Project layout</h2>
 <pre class="tree">cmd/web           <span class="c">website and API, runs in Frankfurt</span>
 cmd/worker        <span class="c">EDGAR poller, Temporal worker and health reports, runs in Ashburn-1</span>
@@ -312,6 +353,47 @@ deploy/           <span class="c">one folder per server, the tunnel image, a loc
   }
   refresh();
   setInterval(refresh, 10000);
+
+  // The model's running cost, from /api/costs. Text only: nothing from the API becomes HTML.
+  const usd = v => '$' + (v < 1 ? v.toFixed(4) : v.toFixed(2));
+  const int = v => Number(v).toLocaleString('en-US');
+  const label = { score: 'Scoring 8-Ks', draft: 'Drafting notes', repair: 'Repairing quotes' };
+  function costRow(name, all, today, sub) {
+    const tr = document.createElement('tr');
+    if (sub) tr.className = 'sub';
+    for (const [text, cls] of [[name, ''], [all, 'num'], [today, 'num']]) {
+      const td = document.createElement('td');
+      if (cls) td.className = cls;
+      td.textContent = text;
+      tr.append(td);
+    }
+    return tr;
+  }
+  async function loadCosts() {
+    const body = document.getElementById('cost-rows');
+    const since = document.getElementById('cost-since');
+    try {
+      const r = await fetch('/api/costs', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      const c = await r.json();
+      const calls = s => `${usd(s.usd)} · ${int(s.calls)} calls`;
+      const rows = [
+        costRow('Language model', calls(c.all_time), calls(c.today)),
+        costRow('Tokens in / out', `${int(c.all_time.input_tokens)} / ${int(c.all_time.output_tokens)}`,
+          `${int(c.today.input_tokens)} / ${int(c.today.output_tokens)}`, true),
+      ];
+      for (const p of c.by_purpose || []) {
+        rows.push(costRow(label[p.purpose] || p.purpose, `${usd(p.usd)} · ${int(p.calls)} calls`, '', true));
+      }
+      body.replaceChildren(...rows);
+      since.textContent = c.all_time.since
+        ? `The model figures are live, summed from every call recorded since ${new Date(c.all_time.since).toISOString().slice(0, 10)}.`
+        : 'No model calls have been recorded yet.';
+    } catch {
+      body.replaceChildren(costRow('Language model', "Live costs aren't answering right now.", ''));
+    }
+  }
+  loadCosts();
 </script>
 </body>
 </html>

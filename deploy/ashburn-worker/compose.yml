@@ -1,4 +1,4 @@
-# Ashburn-1 (oracle-ad3-fd3-1): the worker, which polls EDGAR. Postgres
+# Ashburn-1: the worker, which polls EDGAR. Postgres
 # (Frankfurt) and Temporal (Ashburn-2) are reached through two SSH tunnels, so
 # neither server has to open a database port to the internet.
 name: radar-worker
