@@ -28,10 +28,12 @@ type fakeStore struct {
 	notes      map[string]store.Note
 	toWrite    []store.NoteTask
 	notesToday int
+	outcomes   map[string]store.Outcome
+	toTrack    []store.OutcomeTask
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{details: map[string]edgar.Details{}, labels: map[string]store.Triage{}, notes: map[string]store.Note{}}
+	return &fakeStore{details: map[string]edgar.Details{}, labels: map[string]store.Triage{}, notes: map[string]store.Note{}, outcomes: map[string]store.Outcome{}}
 }
 
 func (s *fakeStore) RecordModelCall(_ context.Context, c store.ModelCall) error {

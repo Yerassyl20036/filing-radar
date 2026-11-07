@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Filing radar · about</title>
+<meta name="description" content="Who built Filing radar, how it was built, and what it runs on.">
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a class="brand" href="/">Filing radar</a>
+    <a href="/">Feed</a>
+    <a href="/status">Status</a>
+    <a href="/how-it-works">How it works</a>
+    <a href="/about" aria-current="page">About</a>
+  </nav>
+
+  <h1>About</h1>
+  <p class="lead">
+    Filing radar is a side project by Yerassyl Maratov, a backend engineer based in Kazakhstan.
+    It's built to show how to put a language model into a production pipeline people can trust:
+    rules first, every model claim checked against its source, a hard daily budget, and everything observable.
+  </p>
+
+  <div class="about">
+    <h2>How it was built</h2>
+    <p>
+      Yerassyl designed and directed it; Claude Code was the main developer and wrote it in about three days.
+      Every stage was reviewed, tested and deployed through a manual pipeline.
+      The measured development cost is on <a href="/how-it-works#costs">How it works</a>.
+    </p>
+
+    <h2>Stack</h2>
+    <p>
+      Go, PostgreSQL, Temporal, DeepSeek (swappable for Gemini, Groq or Claude), Caddy, Docker, GitHub Actions,
+      and three Oracle Cloud free-tier servers.
+    </p>
+
+    <h2>Links</h2>
+    <ul class="links">
+      <li><a href="https://github.com/Yerassyl20036">GitHub profile</a></li>
+      <li><a href="https://github.com/Yerassyl20036/filing-radar">This project's source</a></li>
+      <li><a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a></li>
+    </ul>
+  </div>
+
+  <footer>
+    <p class="credit">Built by Yerassyl Maratov · <a href="https://github.com/Yerassyl20036">GitHub</a> · <a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a> · <a href="https://github.com/Yerassyl20036/filing-radar">Source</a></p>
+  </footer>
+</main>
+</body>
+</html>

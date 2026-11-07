@@ -22,8 +22,9 @@ type FilingRow struct {
 	URL         string          `json:"url"`
 	Parties     json.RawMessage `json:"parties"`
 	FirstSeenAt time.Time       `json:"first_seen_at"`
-	Triage      *Triage         `json:"triage"` // nil while pending
-	Note        *Note           `json:"note"`   // only a published note; nil otherwise
+	Triage      *Triage         `json:"triage"`  // nil while pending
+	Note        *Note           `json:"note"`    // only a published note; nil otherwise
+	Outcome     *Outcome        `json:"outcome"` // only a scored outcome; nil otherwise
 }
 
 // Cursor marks the last row of a page; the next page starts after it.
@@ -119,11 +120,14 @@ func (s *Store) Filings(ctx context.Context, q FilingQuery) ([]FilingRow, error)
 
 	sql := `SELECT f.accession_no, f.form_type, f.cik, f.company, f.accepted_at, f.url, f.parties, f.first_seen_at,
 		t.level, t.reasons, t.rules_version, t.model_score, t.model_reason, t.model_quote, t.model, t.decided_at, d.items,
-		n.status, n.headline, n.claims, n.previous_accession_no, n.reason, n.model, n.prompt_version, n.created_at
+		n.status, n.headline, n.claims, n.previous_accession_no, n.reason, n.model, n.prompt_version, n.created_at,
+		o.ticker, o.prev_close::float8, o.next_close::float8, o.move_pct::float8,
+		to_char(o.prev_date, 'YYYY-MM-DD'), to_char(o.next_date, 'YYYY-MM-DD'), o.created_at
 		FROM filings f
 		LEFT JOIN triage t ON t.accession_no = f.accession_no
 		LEFT JOIN filing_details d ON d.accession_no = f.accession_no
-		LEFT JOIN notes n ON n.accession_no = f.accession_no AND n.status = 'published'`
+		LEFT JOIN notes n ON n.accession_no = f.accession_no AND n.status = 'published'
+		LEFT JOIN outcomes o ON o.accession_no = f.accession_no AND o.status = 'scored'`
 	if len(where) > 0 {
 		sql += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -142,7 +146,8 @@ func (s *Store) Filings(ctx context.Context, q FilingQuery) ([]FilingRow, error)
 
 // scanFilingRow reads one row of Filings. The triage columns are all NULL
 // when the filing is still pending, and the note columns when there is no
-// published note, so they land in nullable values first.
+// published note, and the outcome columns when there is no scored outcome,
+// so they land in nullable values first.
 func scanFilingRow(row pgx.CollectableRow) (FilingRow, error) {
 	var (
 		f            FilingRow
@@ -163,12 +168,27 @@ func scanFilingRow(row pgx.CollectableRow) (FilingRow, error) {
 		noteModel    *string
 		promptVer    *int
 		noteAt       *time.Time
+		ticker       *string
+		prevClose    *float64
+		nextClose    *float64
+		movePct      *float64
+		prevDate     *string
+		nextDate     *string
+		outcomeAt    *time.Time
 	)
 	err := row.Scan(&f.AccessionNo, &f.FormType, &f.CIK, &f.Company, &f.AcceptedAt, &f.URL, &f.Parties, &f.FirstSeenAt,
 		&level, &reasons, &rulesVersion, &modelScore, &modelReason, &modelQuote, &model, &decidedAt, &items,
-		&noteStatus, &headline, &claims, &previous, &noteReason, &noteModel, &promptVer, &noteAt)
+		&noteStatus, &headline, &claims, &previous, &noteReason, &noteModel, &promptVer, &noteAt,
+		&ticker, &prevClose, &nextClose, &movePct, &prevDate, &nextDate, &outcomeAt)
 	if err != nil {
 		return f, err
+	}
+	if ticker != nil && movePct != nil && prevClose != nil && nextClose != nil && prevDate != nil && nextDate != nil {
+		f.Outcome = &Outcome{
+			AccessionNo: f.AccessionNo, Status: OutcomeScored, Ticker: *ticker,
+			PrevClose: *prevClose, NextClose: *nextClose, MovePct: *movePct,
+			PrevDate: *prevDate, NextDate: *nextDate, CreatedAt: *outcomeAt,
+		}
 	}
 	if noteStatus != nil {
 		n := &Note{

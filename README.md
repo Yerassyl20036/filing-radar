@@ -3,7 +3,7 @@
 Every new SEC filing, read by AI agents within minutes, explained with sources,
 and checked against how the stock actually moved the next day.
 
-**Status: stage 3, analyst notes.** Every minute the worker reads EDGAR's
+**Status: stage 4, the scorecard.** Every minute the worker reads EDGAR's
 latest filings and stores each one once. Plain rules label every filing high,
 medium, low or routine from its form and 8-K item numbers; a language model
 (DeepSeek by default, Claude as an option) then reads each 8-K and scores it,
@@ -11,7 +11,10 @@ with a quote that must appear in the filing. For every high 8-K the same model
 writes a short note on what changed since the company's previous comparable
 8-K; every claim quotes its source word for word, and code checks each quote
 before the note is shown. All model calls are recorded with their cost and
-held to a daily budget. The feed opens on the important ones. All three
+held to a daily budget. For every 8-K the model scored, a Temporal workflow
+sleeps until the next market close and records how far the stock moved; a
+public scorecard shows whether higher scores came with bigger moves. The feed
+opens on the important ones. All three
 servers are deployed by one pipeline, and a status page shows the live health
 of every part.
 
@@ -55,6 +58,7 @@ flowchart TD
 - **Rules first, model second.** Rules are free and explainable, and they label everything. The model reads only 8-Ks, under a daily cap, and can raise a label but never lower it. Every score carries a quote that's checked against the filing; a quote that isn't there means the score is dropped.
 - **Notes are checked, not trusted.** The analyst compares the filing (main document and press release) with the company's previous 8-K sharing its lead item. Code checks every claim's quote against the document it names; failed claims get one repair, then are dropped, and a note with fewer than 2 checked claims is kept as rejected and never shown. At most two model steps per note, and every outcome but a spent budget leaves a note row, so a finished note is never paid for again.
 - **A hard daily budget.** Every model call is recorded with its tokens and its cost at list price, and no call starts once the day's spend (UTC) reaches `MODEL_DAILY_BUDGET_USD`. The DeepSeek balance is prepaid with no top-up, so the budget is the only thing between a busy news day and an empty balance. The check comes before each call, so a day can overrun by the few calls already in flight (about a cent each). At the default US$0.20 a day, US$5 lasts about 25 days.
+- **The scorecard waits on a durable timer.** Each scored 8-K gets an `outcome-<accession>` workflow that sleeps until 45 minutes after the first close after EDGAR accepted it (16:00 New York, weekdays), then records the move from the last close before acceptance to the first close after it. The timer lives on the Temporal server, so a deploy or a crash doesn't lose the wait; a holiday means asking again daily, up to 5 days, before "no price". Tickers come from SEC's list (cached a day), daily closes from Yahoo's chart API, which needs no key (Stooq's CSV now sits behind a JavaScript check). The move counts either way: the model scores importance, not direction.
 - **The model is swappable.** The workflow talks to one small interface (score, reason, quote); DeepSeek and Claude are two implementations sharing the prompt and the checks. Filings are public data, so the choice is about cost and quality.
 
 ## Deploying
@@ -105,8 +109,9 @@ Tests: `go test ./...`. The store tests also run against Postgres when
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/filings?form=8-K&level=medium&limit=50&before=<cursor>` | filings newest first, each with its `triage` label (null while pending) and its published analyst `note` (null when there is none: headline, claims each with `text`, `quote`, `source` and `url`); `level` means that level and above; `next` is the cursor for the following page |
+| `GET /api/filings?form=8-K&level=medium&limit=50&before=<cursor>` | filings newest first, each with its `triage` label (null while pending) and its published analyst `note` (null when there is none: headline, claims each with `text`, `quote`, `source` and `url`) and its `outcome` (null until scored: `ticker`, `prev_close`, `next_close`, `move_pct`, `prev_date`, `next_date`); `level` means that level and above; `next` is the cursor for the following page |
 | `GET /api/status` | the health of every part, as the status page shows it |
+| `GET /api/scorecard` | stage 4's eval: scored outcomes `by_score` (`0-39`, `40-69`, `70-100`) and `by_level` (`high`, `medium`, `low`), each with `scored`, `mean_abs_move_pct` and `share_big_move` (moves of `big_move_pct`, 3%, or more either way; null when empty), plus counts `scored`, `no_ticker`, `no_price` and `since` |
 | `GET /api/costs` | model spend from the `model_calls` table: `all_time` and `today` (since midnight UTC), each with `usd`, `calls`, `input_tokens`, `output_tokens` and `since` (the first call, null when there are none), plus `by_purpose` (`score`, `draft`, `repair`) |
 | `GET /healthz` | `ok` when the web server can reach Postgres |
 
@@ -138,7 +143,7 @@ per token, so that figure is the list-price equivalent, not a bill.
 1. **Live filing feed, no AI.** ✅ The worker polls EDGAR's latest-filings feed every minute, stores each filing once (keyed by its accession number), and the website shows the feed.
 2. **Triage.** ✅ Plain rules read each 8-K's item numbers and label every filing; a language model scores each 8-K with a checked quote and can raise the label.
 3. **Analyst agent.** ✅ For material filings: what changed since the last filing, with a citation for every claim, and every citation checked against the filing's text.
-4. **Evals.** A Temporal workflow per filing sleeps until the next market close, fetches the price, and scores the prediction. Scores are public.
+4. **Evals.** ✅ A Temporal workflow per scored 8-K sleeps until the next market close, fetches the closes around the filing, and records the move. The scorecard is public.
 5. **Live architecture page** with throughput, queue depth, agent time and cost.
 
 ## Layout
@@ -149,7 +154,8 @@ cmd/worker       EDGAR poller, Temporal worker and health reports (Ashburn-1)
 internal/edgar   EDGAR client and feed parser
 internal/ingest  one poll: page until overlap, then store
 internal/triage  plain rules that label each filing
-internal/pipeline the per-filing Temporal workflows (triage, note) and their dispatcher
+internal/pipeline the per-filing Temporal workflows (triage, note, outcome) and their dispatcher
+internal/prices  daily closes (Yahoo's chart API) and US market close times
 internal/model   the model calls that score an 8-K and draft a note (any OpenAI-compatible API, or Claude), and the quote checks
 internal/store   Postgres access and schema
 internal/status  turns health reports into what the status page shows

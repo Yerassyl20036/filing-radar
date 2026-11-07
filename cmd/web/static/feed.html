@@ -14,6 +14,7 @@
     <a href="/" aria-current="page">Feed</a>
     <a href="/status">Status</a>
     <a href="/how-it-works">How it works</a>
+    <a href="/about">About</a>
   </nav>
 
   <h1>Latest SEC filings</h1>
@@ -58,8 +59,9 @@
   <button class="more" id="more" hidden>Load older filings</button>
 
   <footer>
-    Times are New York time, when EDGAR accepted the filing. Each row links to the filing on sec.gov.
-    Data: <a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent">SEC EDGAR</a>.
+    <p>Times are New York time, when EDGAR accepted the filing. Each row links to the filing on sec.gov.
+      Data: <a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent">SEC EDGAR</a>.</p>
+    <p class="credit">Built by Yerassyl Maratov · <a href="https://github.com/Yerassyl20036">GitHub</a> · <a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a> · <a href="https://github.com/Yerassyl20036/filing-radar">Source</a></p>
   </footer>
 </main>
 <script>
@@ -135,7 +137,8 @@
   function labelKey(f) {
     const tr = f.triage;
     const label = tr ? [tr.level, tr.decided_at, scored(tr) ? tr.model_score : ''].join(' ') : '';
-    return label + '|' + (noted(f) ? f.note.headline : '');
+    const moved = f.outcome && typeof f.outcome.move_pct === 'number' ? f.outcome.move_pct : '';
+    return label + '|' + (noted(f) ? f.note.headline : '') + '|' + moved;
   }
 
   // The API sends only published notes; checking again costs nothing.
@@ -150,12 +153,14 @@
 
   // The model's score and one-sentence reason, then the passage it quoted.
   // The worker has checked the quote appears word for word in the filing.
-  function modelLine(tr) {
+  function modelLine(tr, outcome) {
     const box = el('div', 'model');
     const line = el('div', 'ai');
     const score = el('span', 'score', 'AI ' + tr.model_score);
     score.title = (tr.model ? tr.model + ' · ' : '') + 'score from 0 to 100';
     line.append(score);
+    const move = moveChip(outcome);
+    if (move) line.append(move);
     if (tr.model_reason) line.append(el('span', 'model-why', tr.model_reason));
     box.append(line);
     if (tr.model_quote) {
@@ -164,6 +169,17 @@
       box.append(q);
     }
     return box;
+  }
+
+  // The stock's move from the last close before the filing to the first
+  // close after it, once stage 4 has measured it.
+  function moveChip(o) {
+    if (!o || o.status !== 'scored' || typeof o.move_pct !== 'number') return null;
+    const m = o.move_pct;
+    const chip = el('span', 'score', 'next close: ' + (m > 0 ? '+' : '') + m.toFixed(1) + '%');
+    chip.style.color = m > 0 ? 'var(--up)' : m < 0 ? 'var(--down)' : 'var(--muted)';
+    chip.title = `${o.ticker}: ${o.prev_close} on ${o.prev_date}, ${o.next_close} on ${o.next_date}`;
+    return chip;
   }
 
   // The headline, and behind a button the checked claims: each claim, the
@@ -241,7 +257,7 @@
 
     if (scored(tr)) {
       li.classList.add('scored');
-      li.append(modelLine(tr));
+      li.append(modelLine(tr, f.outcome));
     }
 
     if (noted(f)) {

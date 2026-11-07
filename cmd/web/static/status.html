@@ -13,6 +13,7 @@
     <a href="/">Feed</a>
     <a href="/status" aria-current="page">Status</a>
     <a href="/how-it-works">How it works</a>
+    <a href="/about">About</a>
   </nav>
   <h1>System status</h1>
   <p class="lead">Live health of every part of the system, across three servers. <a href="/">See the filing feed</a> or <a href="/how-it-works">how it's built</a>.</p>
@@ -23,7 +24,10 @@
     so neither is open to the internet. Every minute it polls EDGAR for new filings, runs a small Temporal workflow end to end,
     and records both results.
   </p>
-  <footer id="checked">Checking…</footer>
+  <footer>
+    <p id="checked">Checking…</p>
+    <p class="credit">Built by Yerassyl Maratov · <a href="https://github.com/Yerassyl20036">GitHub</a> · <a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a> · <a href="https://github.com/Yerassyl20036/filing-radar">Source</a></p>
+  </footer>
 </main>
 <script>
   const grid = document.getElementById('grid');

@@ -14,12 +14,13 @@
     <a href="/">Feed</a>
     <a href="/status">Status</a>
     <a href="/how-it-works" aria-current="page">How it works</a>
+    <a href="/about">About</a>
   </nav>
 
   <h1>How it works</h1>
   <p class="lead">
     Filing radar reads every new SEC filing within minutes, explains what changed with a source for every claim,
-    and checks each prediction against how the stock actually moved the next day. Below is how it's built,
+    and checks the model's importance scores against how far the stock actually moved by the next close. Below is how it's built,
     what's live today, and what comes next.
   </p>
 
@@ -113,7 +114,7 @@
     <div class="arch-wrap">
     <svg class="arch" viewBox="0 0 720 560" role="img" aria-labelledby="flow-title flow-desc">
       <title id="flow-title">Where the results go</title>
-      <desc id="flow-desc">The poller stores raw filings in Postgres and starts one Temporal workflow per tracked filing. The workflow runs triage, plain rules for every filing and a language model for 8-Ks, then the analyst agent for high 8-Ks, and in stage 4 next-day scoring, and writes the results to tables in the same Postgres, keyed by accession number. The website reads them together and shows them to visitors.</desc>
+      <desc id="flow-desc">The poller stores raw filings in Postgres and starts one Temporal workflow per tracked filing. The workflow runs triage, plain rules for every filing and a language model for 8-Ks, then the analyst agent for high 8-Ks, and for scored 8-Ks the move to the next market close, and writes the results to tables in the same Postgres, keyed by accession number. The website reads them together and shows them to visitors.</desc>
       <defs>
         <marker id="head2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M1 1 L9 5 L1 9 z" style="fill: var(--muted)"/>
@@ -135,8 +136,8 @@
       <rect class="node live" x="350" y="192" width="310" height="40" rx="8"/>
       <text x="366" y="217">Analyst agent</text>
       <text class="sub" x="644" y="217" text-anchor="end">notes · stage 3</text>
-      <rect class="node next" x="350" y="248" width="310" height="40" rx="8"/>
-      <text x="366" y="273">Score next day</text>
+      <rect class="node live" x="350" y="248" width="310" height="40" rx="8"/>
+      <text x="366" y="273">Score next close</text>
       <text class="sub" x="644" y="273" text-anchor="end">next close · stage 4</text>
 
       <rect class="server" x="20" y="340" width="680" height="120" rx="14"/>
@@ -145,8 +146,8 @@
       <text x="170" y="379" text-anchor="middle">filings</text>
       <text class="sub" x="170" y="399" text-anchor="middle">raw, within a minute</text>
       <rect class="node live" x="400" y="356" width="280" height="56" rx="8"/>
-      <text x="540" y="379" text-anchor="middle">triage, notes</text>
-      <text class="sub" x="540" y="399" text-anchor="middle">labels, scores and notes</text>
+      <text x="540" y="379" text-anchor="middle">triage, notes, outcomes</text>
+      <text class="sub" x="540" y="399" text-anchor="middle">labels, scores, notes and moves</text>
 
       <rect class="node live" x="200" y="486" width="320" height="56" rx="8"/>
       <text x="360" y="509" text-anchor="middle">Website</text>
@@ -166,7 +167,6 @@
     </div>
     <div class="legend">
       <span>Solid outline: live now</span>
-      <span><span style="color:var(--stale)">Amber dashes</span>: stage 4, coming next</span>
       <span>Grey dashes: outside the system</span>
     </div>
   </div>
@@ -178,9 +178,9 @@
     <li><span class="n">3</span><div><b>Analyst agent.</b><p>For each high-importance 8-K: compare it with the company's previous comparable 8-K and write a headline and 2 to 5 claims on what changed, each quoting the document it comes from.</p></div><span class="pill live">stage 3, live</span></li>
     <li><span class="n">4</span><div><b>Check.</b><p>Code, not the model, checks that every quote appears word for word in its source. Claims that fail get one repair; if they fail again they're dropped. With fewer than 2 checked claims left, the note is not published.</p></div><span class="pill live">stage 3, live</span></li>
     <li><span class="n">5</span><div><b>Publish.</b><p>The note appears in the feed with links to the original filing on sec.gov.</p></div><span class="pill live">stages 1–3, live</span></li>
-    <li><span class="n">6</span><div><b>Score.</b><p>A Temporal workflow waits until after the next market close, fetches the price move, and checks the prediction. Scores are public.</p></div><span class="pill">stage 4</span></li>
+    <li><span class="n">6</span><div><b>Score.</b><p>For every 8-K the model scored, a Temporal workflow sleeps until 45 minutes after the next market close, then records the stock's move from the last close before the filing to the first close after it. The <a href="#scorecard">scorecard</a> compares the model's 0 to 100 materiality score with the size of that move, either way: it checks whether the model knows what matters, not which way the price goes. No model is called.</p></div><span class="pill live">stage 4, live</span></li>
   </ol>
-  <p class="muted" style="font-size:14px">Live today: stage 0 (the three servers, the deploy pipeline, the tunnels, the health checks), stage 1, <a href="/">the filing feed</a>, stage 2, the rules and the model that label it, and stage 3, the notes on high 8-Ks. Stage 4 comes next.</p>
+  <p class="muted" style="font-size:14px">Live today: stage 0 (the three servers, the deploy pipeline, the tunnels, the health checks), stage 1, <a href="/">the filing feed</a>, stage 2, the rules and the model that label it, stage 3, the notes on high 8-Ks, and stage 4, <a href="#scorecard">the scorecard</a>. Stage 5, a live architecture page, comes next.</p>
 
   <h2>How a note is written</h2>
   <p>
@@ -249,10 +249,32 @@
     </div>
   </div>
 
+  <h2 id="scorecard">Scorecard</h2>
+  <p>
+    The project's first eval. Every 8-K the model scored gets an outcome: the stock's move from the last close before EDGAR accepted the filing
+    to the first close after it, looked up by the ticker SEC lists for the company. If the model's score means anything, higher scores, and the
+    higher labels they raise, should come with bigger moves. A move counts either way; the score is about importance, not direction.
+  </p>
+  <div class="card table-wrap">
+    <table class="servers costs">
+      <thead><tr><th>Group</th><th class="num">Filings</th><th class="num">Mean move, either way</th><th class="num">Moved 3% or more</th></tr></thead>
+      <tbody id="score-rows">
+        <tr><td colspan="4">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="costs-note" id="score-note">The figures are live, from every outcome recorded so far.</p>
+  <p class="costs-note">
+    Small samples are noisy: with a few dozen filings in a row, one takeover or one bad day for the whole market moves the mean by points,
+    so read it as a trend only once each row holds a hundred or so. Moves are raw closes, not adjusted for the market or for news that wasn't in the filing.
+  </p>
+
   <h2>Data sources</h2>
   <ul class="decisions">
     <li><a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent">EDGAR latest filings</a> <span>— the live feed the worker polls every minute.</span></li>
     <li><a href="https://www.sec.gov/Archives/edgar/daily-index/">EDGAR daily index</a> <span>— every filing of each day, used to repair gaps.</span></li>
+    <li><a href="https://www.sec.gov/files/company_tickers.json">SEC company tickers</a> <span>— which ticker each company trades under, read once a day.</span></li>
+    <li><a href="https://finance.yahoo.com/">Yahoo Finance chart data</a> <span>— daily closes for the scorecard, one request per scored 8-K, at most one a second.</span></li>
     <li><a href="https://www.sec.gov/developer">SEC developer resources</a> <span>— the access rules: a declared User-Agent and at most 10 requests per second. The radar stays under 1.</span></li>
   </ul>
 
@@ -269,7 +291,7 @@
     <li>One repair, then drop. <span>A failed quote goes back to the model once, with what didn't match. A second failure means the claim isn't in the source, so it's dropped rather than retried until it happens to pass.</span></li>
     <li>A daily dollar budget. <span>Every model call is recorded with its tokens and cost. When the day's budget is spent, calls stop until midnight UTC and the rules' labels stand; the status page shows today's spend.</span></li>
     <li>Store a filing only after paging stops. <span>EDGAR lists a filing once per party, and a Form 4's two entries can land on two pages. Storing page by page would mistake the second half for "already stored", stop paging early and skip filings.</span></li>
-    <li>Temporal for waiting, not for everything. <span>The one-minute poll is safe to repeat and needs no workflow engine; the next-day score has to survive restarts, so it gets one.</span></li>
+    <li>Temporal for waiting, not for everything. <span>The one-minute poll is safe to repeat and needs no workflow engine. The scorecard has to wait: a filing at 18:00 on a Friday can't be scored before Monday's close. Its workflow sleeps on a durable timer that lives on the Temporal server, so a deploy or a crashed worker in between doesn't lose the wait, and a holiday just means one more day's sleep, up to five.</span></li>
     <li>One Temporal workflow per tracked filing. <span>The workflow ID is the accession number, so Temporal refuses a second start; a dispatcher retries anything without a label every minute. Form 4s and other routine forms are labelled on the spot and never start one.</span></li>
     <li>Deploys by hand, from <code>main</code> only. <span>The pipeline ends by proving the worker reached both other servers.</span></li>
   </ul>
@@ -321,15 +343,18 @@ cmd/worker        <span class="c">EDGAR poller, Temporal worker and health repor
 internal/edgar    <span class="c">EDGAR client and feed parser</span>
 internal/ingest   <span class="c">one poll: page until overlap, then store</span>
 internal/triage   <span class="c">plain rules that label each filing</span>
-internal/model    <span class="c">the model call (DeepSeek or Claude) that scores an 8-K</span>
-internal/pipeline <span class="c">the per-filing Temporal workflow and its dispatcher</span>
+internal/model    <span class="c">the model calls (DeepSeek or Claude) that score an 8-K and draft a note</span>
+internal/prices   <span class="c">daily closes and US market close times, for the scorecard</span>
+internal/pipeline <span class="c">the per-filing Temporal workflows (triage, note, outcome) and their dispatcher</span>
 internal/store    <span class="c">Postgres access and schema</span>
 internal/status   <span class="c">turns health reports into what the status page shows</span>
 internal/ping     <span class="c">the one-minute Temporal round trip</span>
 deploy/           <span class="c">one folder per server, the tunnel image, a local setup</span>
 .github/          <span class="c">tests on every push, deploys by hand</span></pre>
 
-  <footer>Built by Yerassyl Maratov · <a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a></footer>
+  <footer>
+    <p class="credit">Built by Yerassyl Maratov · <a href="https://github.com/Yerassyl20036">GitHub</a> · <a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a> · <a href="https://github.com/Yerassyl20036/filing-radar">Source</a></p>
+  </footer>
 </main>
 <script>
   // Colour the diagram's dots from the same API the status page uses.
@@ -394,6 +419,44 @@ deploy/           <span class="c">one folder per server, the tunnel image, a loc
     }
   }
   loadCosts();
+
+  // The scorecard, from /api/scorecard. Text only, like the costs.
+  const pct = v => v === null || v === undefined ? '–' : v.toFixed(1) + '%';
+  const share = v => v === null || v === undefined ? '–' : Math.round(v * 100) + '%';
+  function scoreRow(cells, cls) {
+    const tr = document.createElement('tr');
+    if (cls) tr.className = cls;
+    cells.forEach((text, i) => {
+      const td = document.createElement('td');
+      if (i > 0) td.className = 'num';
+      td.textContent = text;
+      tr.append(td);
+    });
+    return tr;
+  }
+  async function loadScorecard() {
+    const body = document.getElementById('score-rows');
+    const note = document.getElementById('score-note');
+    try {
+      const r = await fetch('/api/scorecard', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      const sc = await r.json();
+      const rows = [];
+      for (const [title, groups, name] of [['By model score', sc.by_score, b => 'score ' + b.label], ['By label', sc.by_level, b => b.label]]) {
+        rows.push(scoreRow([title, '', '', '']));
+        for (const b of groups || []) {
+          rows.push(scoreRow([name(b), int(b.scored), pct(b.mean_abs_move_pct), share(b.share_big_move)], 'sub'));
+        }
+      }
+      body.replaceChildren(...rows);
+      note.textContent = sc.since
+        ? `Live: ${int(sc.scored)} scored outcomes since ${new Date(sc.since).toISOString().slice(0, 10)}; ${int(sc.no_ticker)} filings had no ticker and ${int(sc.no_price)} no price.`
+        : 'No outcomes yet: the first ones land after the next market close.';
+    } catch {
+      body.replaceChildren(scoreRow(["The scorecard isn't answering right now.", '', '', '']));
+    }
+  }
+  loadScorecard();
 </script>
 </body>
 </html>

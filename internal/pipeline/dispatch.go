@@ -35,6 +35,9 @@ type Dispatcher struct {
 	// Hold is the Activities' hold on model calls. Notes started while it
 	// is active would only end without a note.
 	Hold *Hold
+	// Outcomes turns on stage 4's outcome workflows. It needs SEC's ticker
+	// list, so it is off when EDGAR_USER_AGENT isn't set.
+	Outcomes bool
 
 	// running holds the note workflows this dispatcher started whose note
 	// row hasn't landed yet, with when they started. They count against
@@ -48,12 +51,14 @@ const noteRunTimeout = 2 * time.Hour
 
 // DispatchResult is what one run did.
 type DispatchResult struct {
-	Labelled     int // routine forms and re-labels, done on the spot
-	Started      int // workflows started
-	Running      int // already had a workflow
-	Failed       int
-	NotesStarted int // note workflows started
-	NotesRunning int // already had a note workflow
+	Labelled        int // routine forms and re-labels, done on the spot
+	Started         int // workflows started
+	Running         int // already had a workflow
+	Failed          int
+	NotesStarted    int // note workflows started
+	NotesRunning    int // already had a note workflow
+	OutcomesStarted int // outcome workflows started
+	OutcomesRunning int // already had an outcome workflow (most are waiting for a close)
 }
 
 // Dispatch runs once. Routine forms (Form 4, 144…) are labelled at once and
@@ -101,8 +106,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context) (DispatchResult, error) {
 	if err != nil {
 		errs = append(errs, err)
 	}
+	outcomes, err := d.outcomes(ctx, &res)
+	if err != nil {
+		errs = append(errs, err)
+	}
 	if len(errs) > 0 {
-		return res, fmt.Errorf("%d of %d failed, first: %w", len(errs), len(todo)+notes, errs[0])
+		return res, fmt.Errorf("%d of %d failed, first: %w", len(errs), len(todo)+notes+outcomes, errs[0])
 	}
 	return res, nil
 }
@@ -182,6 +191,38 @@ func (d *Dispatcher) notes(ctx context.Context, res *DispatchResult) (int, error
 	return tried, errors.Join(errs...)
 }
 
+// outcomeBatch is how many outcome workflows one run asks for. Most of them
+// are already running, asleep until their close, and Temporal says so.
+const outcomeBatch = 100
+
+// outcomes starts an outcome workflow for each scored 8-K without an
+// outcome row, old ones included, so the scorecard backfills by itself.
+// It returns how many it tried.
+func (d *Dispatcher) outcomes(ctx context.Context, res *DispatchResult) (int, error) {
+	if !d.Outcomes {
+		return 0, nil
+	}
+	todo, err := d.Store.OutcomesToTrack(ctx, outcomeBatch)
+	if err != nil {
+		res.Failed++
+		return 1, fmt.Errorf("outcomes: %w", err)
+	}
+	var errs []error
+	for _, t := range todo {
+		started, err := d.startOutcome(ctx, t)
+		switch {
+		case err != nil:
+			res.Failed++
+			errs = append(errs, fmt.Errorf("outcome of %s: %w", t.AccessionNo, err))
+		case started:
+			res.OutcomesStarted++
+		default:
+			res.OutcomesRunning++
+		}
+	}
+	return len(todo), errors.Join(errs...)
+}
+
 func (d *Dispatcher) relabel(ctx context.Context, u store.Undecided) error {
 	items, _, found, err := d.Store.Details(ctx, u.AccessionNo)
 	if err != nil {
@@ -226,6 +267,22 @@ func (d *Dispatcher) startNote(ctx context.Context, t store.NoteTask) (bool, err
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
 		WorkflowRunTimeout:                       2 * time.Hour,
 	}, NoteWorkflow, t)
+	return startResult(err)
+}
+
+// startOutcome is start for an outcome workflow. It may sleep over a long
+// weekend and then retry a missing close daily, so it gets two weeks.
+func (d *Dispatcher) startOutcome(ctx context.Context, t store.OutcomeTask) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := d.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID:                                       OutcomeWorkflowID(t.AccessionNo),
+		TaskQueue:                                TaskQueue,
+		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
+		WorkflowRunTimeout:                       14 * 24 * time.Hour,
+	}, OutcomeWorkflow, t)
 	return startResult(err)
 }
 

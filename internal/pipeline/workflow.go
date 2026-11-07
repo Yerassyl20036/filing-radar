@@ -2,8 +2,8 @@
 // filing's details from SEC, have a model score 8-Ks, label the filing with
 // the rules (raised by the model's score when it checks out), save the label.
 // Stage 3's analyst note has its own workflow (note.go), started once the
-// filing is labelled high. Stage 4 adds a day's wait before checking the
-// prediction.
+// filing is labelled high. Stage 4's outcome workflow (outcome.go) waits for
+// the next market close after each scored 8-K and records the move.
 package pipeline
 
 import (
@@ -19,6 +19,7 @@ import (
 
 	"github.com/Yerassyl20036/filing-radar/internal/edgar"
 	"github.com/Yerassyl20036/filing-radar/internal/model"
+	"github.com/Yerassyl20036/filing-radar/internal/prices"
 	"github.com/Yerassyl20036/filing-radar/internal/store"
 	"github.com/Yerassyl20036/filing-radar/internal/triage"
 )
@@ -134,6 +135,8 @@ type Store interface {
 	SaveNote(ctx context.Context, n store.Note) error
 	NotesToWrite(ctx context.Context, limit int) ([]store.NoteTask, error)
 	NotesToday(ctx context.Context) (int, error)
+	SaveOutcome(ctx context.Context, o store.Outcome) error
+	OutcomesToTrack(ctx context.Context, limit int) ([]store.OutcomeTask, error)
 }
 
 // Model is what one provider client does: score 8-Ks and draft notes.
@@ -149,10 +152,12 @@ type Activities struct {
 	Archive  Archive // the note's documents; nil when EDGAR_USER_AGENT isn't set
 	BaseURL  string  // sec.gov, for the links in notes; empty means edgar.DefaultBaseURL
 	Store    Store
-	Model    model.Scorer // nil when no model API key is set: rules only
-	Writer   model.Writer // nil when no model API key is set: no notes
-	Provider string       // as recorded with each call: "deepseek", "anthropic"...
-	DailyCap int          // most model scores per UTC day
+	Model    model.Scorer  // nil when no model API key is set: rules only
+	Writer   model.Writer  // nil when no model API key is set: no notes
+	Provider string        // as recorded with each call: "deepseek", "anthropic"...
+	Tickers  Tickers       // SEC's ticker list; nil when EDGAR_USER_AGENT isn't set
+	Prices   prices.Source // daily closes, for stage 4
+	DailyCap int           // most model scores per UTC day
 	// Budget is the most the models may cost per UTC day, in US$. The
 	// balance is prepaid with no top-up, so it is checked before every call.
 	Budget float64

@@ -16,7 +16,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	_ "time/tzdata" // notes date filings in New York time; the image may lack zone files
+	_ "time/tzdata" // notes and market closes use New York time; the distroless image has no zone files
 
 	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
@@ -27,6 +27,7 @@ import (
 	"github.com/Yerassyl20036/filing-radar/internal/model"
 	"github.com/Yerassyl20036/filing-radar/internal/ping"
 	"github.com/Yerassyl20036/filing-radar/internal/pipeline"
+	"github.com/Yerassyl20036/filing-radar/internal/prices"
 	"github.com/Yerassyl20036/filing-radar/internal/status"
 	"github.com/Yerassyl20036/filing-radar/internal/store"
 )
@@ -70,10 +71,13 @@ func main() {
 		DailyCap: envInt("TRIAGE_MODEL_DAILY_CAP", 200),
 		Budget:   envFloat("MODEL_DAILY_BUDGET_USD", 0.20),
 		Hold:     &pipeline.Hold{},
+		Prices:   prices.NewYahoo(env("PRICES_BASE_URL", prices.DefaultBaseURL)),
 	}
 	if secErr == nil {
 		// Only when set: a nil *Client inside an interface wouldn't be nil.
 		acts.SEC, acts.Docs, acts.Archive = sec, sec, sec
+		// SEC's ticker list is about 1 MB and changes slowly: once a day.
+		acts.Tickers = &pipeline.TickerCache{Fetch: sec.Tickers, TTL: 24 * time.Hour}
 	}
 	noteCap := envInt("ANALYST_DAILY_CAP", 30)
 	// Without a key the rules label everything on their own, which is how
@@ -97,6 +101,7 @@ func main() {
 	w.RegisterActivity(ping.Activity)
 	w.RegisterWorkflow(pipeline.FilingWorkflow)
 	w.RegisterWorkflow(pipeline.NoteWorkflow)
+	w.RegisterWorkflow(pipeline.OutcomeWorkflow)
 	w.RegisterActivity(acts)
 	if err := w.Start(); err != nil {
 		fatal("start temporal worker", err)
@@ -110,7 +115,8 @@ func main() {
 	// The ingestor runs beside the health reports. Polling is short and safe
 	// to repeat, and its state lives in the filings table, so a plain loop is
 	// enough. Temporal is for the multi-step work per filing.
-	dispatcher := &pipeline.Dispatcher{Store: st, Temporal: c, Batch: 200, NoteCap: noteCap, Budget: acts.Budget, Hold: acts.Hold}
+	dispatcher := &pipeline.Dispatcher{Store: st, Temporal: c, Batch: 200, NoteCap: noteCap, Budget: acts.Budget, Hold: acts.Hold,
+		Outcomes: secErr == nil}
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	wg.Go(func() { runIngestor(ctx, st, host, sec, secErr, dispatcher) })
@@ -184,10 +190,12 @@ func runIngestor(ctx context.Context, st *store.Store, host string, src *edgar.C
 		switch {
 		case err != nil && ctx.Err() == nil:
 			slog.Warn("dispatch", "labelled", dr.Labelled, "started", dr.Started, "running", dr.Running,
-				"notes_started", dr.NotesStarted, "notes_running", dr.NotesRunning, "failed", dr.Failed, "err", err)
+				"notes_started", dr.NotesStarted, "notes_running", dr.NotesRunning,
+				"outcomes_started", dr.OutcomesStarted, "outcomes_running", dr.OutcomesRunning, "failed", dr.Failed, "err", err)
 		case dr != (pipeline.DispatchResult{}):
 			slog.Info("dispatch", "labelled", dr.Labelled, "started", dr.Started, "running", dr.Running,
-				"notes_started", dr.NotesStarted, "notes_running", dr.NotesRunning)
+				"notes_started", dr.NotesStarted, "notes_running", dr.NotesRunning,
+				"outcomes_started", dr.OutcomesStarted, "outcomes_running", dr.OutcomesRunning)
 		}
 	})
 }

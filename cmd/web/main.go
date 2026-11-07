@@ -52,6 +52,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/costs", s.costs)
+	mux.HandleFunc("GET /api/scorecard", s.scorecard)
 	mux.HandleFunc("GET /api/filings", s.filings)
 
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -78,6 +79,7 @@ func routePages(mux *http.ServeMux) {
 	mux.HandleFunc("GET /{$}", page("static/feed.html"))
 	mux.HandleFunc("GET /status", page("static/status.html"))
 	mux.HandleFunc("GET /how-it-works", page("static/how.html"))
+	mux.HandleFunc("GET /about", page("static/about.html"))
 	mux.Handle("GET /static/", http.FileServerFS(static))
 }
 

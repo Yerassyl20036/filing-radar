@@ -84,3 +84,18 @@ CREATE TABLE IF NOT EXISTS model_calls (
 
 -- The budget check reads only today's calls.
 CREATE INDEX IF NOT EXISTS model_calls_by_time ON model_calls (created_at);
+
+-- Stage 4: what the stock did after a scored 8-K. The move runs from the
+-- last close before EDGAR accepted the filing to the first close after it.
+-- A row is the end of a filing's outcome workflow, whatever it found.
+CREATE TABLE IF NOT EXISTS outcomes (
+    accession_no text        PRIMARY KEY REFERENCES filings (accession_no),
+    status       text        NOT NULL CHECK (status IN ('scored', 'no ticker', 'no price')),
+    ticker       text        NOT NULL DEFAULT '',
+    prev_close   numeric,                -- NULL unless scored
+    next_close   numeric,
+    move_pct     numeric,                -- (next - prev) / prev, in percent
+    prev_date    date,
+    next_date    date,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);

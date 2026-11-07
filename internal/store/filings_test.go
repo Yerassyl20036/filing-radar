@@ -32,9 +32,10 @@ func testStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	clean := func() {
-		// notes, triage and filing_details point at filings, so they go first.
-		// model_calls has no foreign key, but test rows are cleaned there too.
-		for _, table := range []string{"notes", "model_calls", "triage", "filing_details", "filings"} {
+		// outcomes, notes, triage and filing_details point at filings, so they
+		// go first. model_calls has no foreign key, but test rows are cleaned
+		// there too.
+		for _, table := range []string{"outcomes", "notes", "model_calls", "triage", "filing_details", "filings"} {
 			_, _ = s.pool.Exec(context.Background(), `DELETE FROM `+table+` WHERE accession_no LIKE '9999999999-%'`)
 		}
 	}
