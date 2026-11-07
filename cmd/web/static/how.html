@@ -5,12 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Filing radar · how it works</title>
 <meta name="description" content="How Filing radar is built: three small servers, SSH tunnels, Temporal, and the path every SEC filing takes.">
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="theme-color" content="#2f6fde">
 <link rel="stylesheet" href="/static/site.css">
 </head>
 <body>
 <main>
   <nav>
-    <a class="brand" href="/">Filing radar</a>
+    <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="26" height="26">Filing radar</a>
     <a href="/">Feed</a>
     <a href="/status">Status</a>
     <a href="/how-it-works" aria-current="page">How it works</a>
@@ -327,6 +330,18 @@
   </p>
 
   <h3>Built with</h3>
+  <ul class="tech-row compact" aria-label="Built with">
+    <li><span class="logo temporal" role="img" aria-label="Temporal logo"></span><b>Temporal</b></li>
+    <li><span class="logo deepseek" role="img" aria-label="DeepSeek logo"></span><b>DeepSeek</b></li>
+    <li><span class="tbadge" role="img" aria-label="SEC EDGAR (text badge)">SEC</span><b>SEC EDGAR</b></li>
+    <li><span class="logo go" role="img" aria-label="Go logo"></span><b>Go</b></li>
+    <li><span class="logo postgresql" role="img" aria-label="PostgreSQL logo"></span><b>PostgreSQL</b></li>
+    <li><span class="logo caddy" role="img" aria-label="Caddy logo"></span><b>Caddy</b></li>
+    <li><span class="tbadge" role="img" aria-label="Oracle Cloud (text badge)">OCI</span><b>Oracle Cloud</b></li>
+    <li><span class="logo claude" role="img" aria-label="Claude logo"></span><b>Claude</b></li>
+    <li><span class="logo docker" role="img" aria-label="Docker logo"></span><b>Docker</b></li>
+    <li><span class="logo githubactions" role="img" aria-label="GitHub Actions logo"></span><b>GitHub Actions</b></li>
+  </ul>
   <ul class="decisions">
     <li><a href="https://docs.temporal.io/">Temporal</a> <span>— durable workflows for each filing and note.</span></li>
     <li><a href="https://api-docs.deepseek.com/">DeepSeek API</a> <span>— the default language model.</span></li>
@@ -335,7 +350,11 @@
     <li><a href="https://www.postgresql.org/">PostgreSQL</a> <span>— filings, labels, notes and model calls.</span></li>
     <li><a href="https://caddyserver.com/">Caddy</a> <span>— HTTPS in front of the website.</span></li>
     <li><a href="https://www.oracle.com/cloud/free/">Oracle Cloud Free Tier</a> <span>— the three servers.</span></li>
+    <li><a href="https://www.anthropic.com/claude-code">Claude Code</a> <span>— the main developer; Claude is also a drop-in model.</span></li>
+    <li><a href="https://www.docker.com/">Docker</a> <span>— every service ships as a container.</span></li>
+    <li><a href="https://github.com/features/actions">GitHub Actions</a> <span>— tests on every push, deploys by hand.</span></li>
   </ul>
+  <p class="logo-note">Logos belong to their owners; no affiliation or sponsorship.</p>
 
   <h2>Project layout</h2>
 <pre class="tree">cmd/web           <span class="c">website and API, runs in Frankfurt</span>

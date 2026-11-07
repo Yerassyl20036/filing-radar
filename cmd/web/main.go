@@ -80,6 +80,8 @@ func routePages(mux *http.ServeMux) {
 	mux.HandleFunc("GET /status", page("static/status.html"))
 	mux.HandleFunc("GET /how-it-works", page("static/how.html"))
 	mux.HandleFunc("GET /about", page("static/about.html"))
+	// Some clients ask for /favicon.ico regardless of the <link> tag.
+	mux.Handle("GET /favicon.ico", http.RedirectHandler("/static/logo.svg", http.StatusMovedPermanently))
 	mux.Handle("GET /static/", http.FileServerFS(static))
 }
 

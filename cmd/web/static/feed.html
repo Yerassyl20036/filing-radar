@@ -5,31 +5,52 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Filing radar · latest SEC filings</title>
 <meta name="description" content="Every new SEC filing, about a minute after EDGAR accepts it.">
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="theme-color" content="#2f6fde">
 <link rel="stylesheet" href="/static/site.css">
 </head>
 <body>
 <main>
   <nav>
-    <a class="brand" href="/">Filing radar</a>
+    <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="26" height="26">Filing radar</a>
     <a href="/" aria-current="page">Feed</a>
     <a href="/status">Status</a>
     <a href="/how-it-works">How it works</a>
     <a href="/about">About</a>
   </nav>
 
-  <h1>Latest SEC filings</h1>
-  <div class="intro">
+  <header class="hero intro">
+    <svg class="rings" viewBox="0 0 260 260" aria-hidden="true" focusable="false">
+      <g fill="none" stroke="currentColor" stroke-width="2"><circle cx="130" cy="130" r="40"/><circle cx="130" cy="130" r="80"/><circle cx="130" cy="130" r="120"/></g>
+      <path d="M130 130 L215 45" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="130" cy="130" r="7" fill="currentColor"/><circle cx="178" cy="100" r="6" fill="currentColor"/>
+    </svg>
+    <p class="eyebrow">Live from SEC EDGAR</p>
+    <h1>Latest SEC filings</h1>
     <p class="lead">
       Filing radar reads every new SEC filing within about a minute of EDGAR accepting it and labels it high, medium, low or routine with plain rules.
       A language model scores each 8-K and writes a short note on the important ones; every claim in a note quotes the filing, and code checks each quote word for word.
       It's a side project showing a reliable AI pipeline running on three free 1 GB servers. Important shows medium and up.
     </p>
-    <p class="intro-links">
-      <a href="/how-it-works">How it works</a>
-      <a href="/how-it-works#costs">What it costs</a>
-      <a href="https://github.com/Yerassyl20036/filing-radar">Source on GitHub</a>
+    <p class="stack-line">
+      <span class="tech"><span class="logo go" role="img" aria-label="Go logo"></span>Go</span>
+      <span class="tech"><span class="logo postgresql" role="img" aria-label="PostgreSQL logo"></span>PostgreSQL</span>
+      <span class="tech"><span class="logo temporal" role="img" aria-label="Temporal logo"></span>Temporal</span>
+      <span class="tech"><span class="logo deepseek" role="img" aria-label="DeepSeek logo"></span>DeepSeek</span>
+      <span class="tech"><span class="tbadge" aria-hidden="true">OCI</span>Oracle Cloud free tier</span>
     </p>
-  </div>
+    <ul class="stats" id="stats" aria-label="Live numbers" hidden>
+      <li class="stat" id="stat-up" hidden><b></b>parts up</li>
+      <li class="stat" id="stat-calls" hidden><b></b>model calls today</li>
+      <li class="stat" id="stat-spend" hidden><b></b>model spend today</li>
+    </ul>
+    <p class="intro-links">
+      <a class="btn primary" href="/how-it-works">How it works</a>
+      <a class="btn" href="/how-it-works#costs">What it costs</a>
+      <a class="btn" href="https://github.com/Yerassyl20036/filing-radar">Source on GitHub</a>
+    </p>
+  </header>
 
   <div class="feed-bar">
     <div class="filters">
@@ -425,19 +446,45 @@
     try {
       const r = await fetch('/api/status', { cache: 'no-store' });
       if (!r.ok) throw new Error(r.status);
-      const c = (await r.json()).components.find(c => c.name === 'Ingestor');
+      const { components } = await r.json();
+      setStat('stat-up', `${components.filter(c => c.state === 'up').length} of ${components.length}`);
+      const c = components.find(c => c.name === 'Ingestor');
       if (!c) throw new Error('no ingestor');
       liveDot.className = 'dot ' + c.state;
       liveText.textContent = 'Ingestor: ' + c.note;
     } catch {
+      setStat('stat-up', null);
       liveDot.className = 'dot';
       liveText.textContent = "The ingestor's status isn't available.";
+    }
+  }
+
+  // The hero's live numbers. Text only; a number that can't be read stays hidden.
+  const statsEl = document.getElementById('stats');
+  function setStat(id, text) {
+    const li = document.getElementById(id);
+    li.querySelector('b').textContent = text ?? '';
+    li.hidden = text === null;
+    statsEl.hidden = !statsEl.querySelector('.stat:not([hidden])');
+  }
+  async function costsToday() {
+    try {
+      const r = await fetch('/api/costs', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      const t = (await r.json()).today;
+      setStat('stat-calls', Number(t.calls).toLocaleString('en-US'));
+      setStat('stat-spend', '$' + (t.usd < 1 ? t.usd.toFixed(4) : t.usd.toFixed(2)));
+    } catch {
+      setStat('stat-calls', null);
+      setStat('stat-spend', null);
     }
   }
 
   pressView();
   reset();
   ingestor();
+  costsToday();
+  setInterval(costsToday, 60000);
   setInterval(refresh, 10000);
   setInterval(ingestor, 10000);
 </script>

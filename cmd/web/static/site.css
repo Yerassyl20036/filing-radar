@@ -11,17 +11,21 @@ body { margin: 0; background: var(--bg); color: var(--text); line-height: 1.55; 
 main { max-width: 920px; margin: 0 auto; padding: 28px 16px 64px; }
 a { color: var(--accent); }
 
-nav { display: flex; align-items: center; gap: 20px; margin-bottom: 36px; font-size: 15px; }
-nav .brand { font-weight: 650; color: var(--text); text-decoration: none; margin-right: auto; }
+nav { display: flex; align-items: center; gap: 4px; margin-bottom: 32px; padding-bottom: 14px; border-bottom: 1px solid var(--line); font-size: 15px; }
+nav .brand { display: inline-flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; color: var(--text); text-decoration: none; margin-right: auto; }
+nav .brand img { display: block; width: 26px; height: 26px; border-radius: 7px; }
 nav a { color: var(--muted); text-decoration: none; }
-nav a[aria-current="page"] { color: var(--text); font-weight: 550; }
+nav a:not(.brand) { padding: 4px 11px; border-radius: 999px; transition: background-color .15s, color .15s; }
+nav a:not(.brand):hover { color: var(--text); background: var(--soft); }
+nav a[aria-current="page"] { color: var(--text); font-weight: 550; background: var(--soft); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-h1 { font-size: 28px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 8px; }
-h2 { font-size: 19px; font-weight: 600; margin: 44px 0 12px; }
+h1 { font-size: clamp(25px, 2.2vw + 17px, 32px); font-weight: 680; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 10px; }
+h2 { font-size: 20px; font-weight: 620; letter-spacing: -0.01em; margin: 44px 0 14px; }
 .lead { color: var(--muted); margin: 0 0 28px; max-width: 680px; }
 .muted { color: var(--muted); }
 
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; box-shadow: 0 1px 2px rgb(0 0 0 / .04); }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
 
 /* Status page */
@@ -70,24 +74,24 @@ table.servers { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.servers th, table.servers td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 table.servers th { color: var(--muted); font-weight: 600; }
 .table-wrap { overflow-x: auto; }
-pre.tree { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; overflow-x: auto; font-size: 13.5px; line-height: 1.7; margin: 0; }
+pre.tree { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; overflow-x: auto; font-size: 13.5px; line-height: 1.7; margin: 0; }
 pre.tree .c { color: var(--muted); }
 
-footer { margin-top: 44px; color: var(--muted); font-size: 13px; }
+footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
 
 /* Feed page */
 .feed-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { font: inherit; font-size: 13px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); cursor: pointer; }
-.chip:hover { color: var(--text); }
+.chip { font: inherit; font-size: 13px; padding: 5px 13px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); cursor: pointer; transition: color .15s, border-color .15s; }
+.chip:hover { color: var(--text); border-color: var(--muted); }
 .chip[aria-pressed="true"] { color: var(--text); border-color: var(--text); font-weight: 550; }
 /* The view switch is one choice between two, so its chips share an outline, apart from the form chips. */
 .switch { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--soft); }
 .switch .chip { border-color: transparent; background: transparent; }
 .switch .chip[aria-pressed="true"] { border-color: var(--text); background: var(--card); }
 .live { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
-.feed { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.feed { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 1px 2px rgb(0 0 0 / .04); }
 .feed:empty { display: none; }
 .filing { display: grid; grid-template-columns: 128px 1fr auto; grid-template-areas: "form who time" "level why time"; gap: 4px 14px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); }
 .filing:first-child { border-top: 0; }
@@ -141,7 +145,8 @@ footer { margin-top: 44px; color: var(--muted); font-size: 13px; }
 }
 .empty { color: var(--muted); text-align: center; padding: 28px 18px; }
 .empty p { margin: 0; }
-.more { display: block; margin: 16px auto 0; font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+.more { display: block; margin: 16px auto 0; font: inherit; font-size: 14px; font-weight: 550; padding: 9px 18px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; transition: border-color .15s; }
+.more:hover { border-color: var(--muted); }
 .more:disabled { opacity: .6; cursor: progress; }
 .more[hidden] { display: none; } /* display: block above would otherwise beat the hidden attribute */
 
@@ -169,6 +174,82 @@ h3 { font-size: 15px; font-weight: 600; margin: 22px 0 8px; }
 footer p { margin: 0 0 6px; }
 /* Five nav links don't fit on one 375px line, so let them wrap under the brand. */
 @media (max-width: 520px) {
-  nav { flex-wrap: wrap; gap: 6px 16px; }
+  nav { flex-wrap: wrap; gap: 8px 2px; }
   nav .brand { flex-basis: 100%; }
+  nav a:not(.brand) { padding: 4px 9px; }
+  nav .brand + a { margin-left: -9px; }
 }
+
+/* Brand logos: Simple Icons shapes (logos/NOTICE.txt), drawn as masks so CSS picks the colour.
+   Each brand colour is mixed a little toward the text colour, so it keeps contrast in both themes. */
+.logo { --brand: var(--text); display: inline-block; flex: none; width: 1.1em; height: 1.1em; vertical-align: -0.2em;
+  background-color: var(--brand); background-color: color-mix(in srgb, var(--brand) 78%, var(--text));
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+.logo.go { --icon: url("logos/go.svg"); --brand: #00add8; }
+.logo.postgresql { --icon: url("logos/postgresql.svg"); --brand: #4169e1; }
+.logo.temporal { --icon: url("logos/temporal.svg"); }
+.logo.deepseek { --icon: url("logos/deepseek.svg"); --brand: #5786fe; }
+.logo.claude { --icon: url("logos/claude.svg"); --brand: #d97757; }
+.logo.caddy { --icon: url("logos/caddy.svg"); --brand: #1f88c0; }
+.logo.docker { --icon: url("logos/docker.svg"); --brand: #2496ed; }
+.logo.githubactions { --icon: url("logos/githubactions.svg"); --brand: #2088ff; }
+@media (forced-colors: active) { .logo { forced-color-adjust: none; background-color: CanvasText; } }
+/* Brands with no Simple Icons shape get a plain text badge, never an invented logo. */
+.tbadge { display: inline-grid; place-items: center; flex: none; min-width: 1.6em; height: 1.25em; padding: 0 .3em; vertical-align: -0.2em;
+  border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font: 700 .62em/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em; }
+.tech { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+
+/* "Built with" row: a logo, its name, and what it does here. */
+.tech-row { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+.tech-row li { display: grid; justify-items: center; align-content: start; gap: 6px; padding: 14px 8px 12px; text-align: center;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+.tech-row .logo { width: 30px; height: 30px; }
+.tech-row .tbadge { height: 30px; min-width: 30px; font-size: 11px; border-radius: 8px; }
+.tech-row b { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.tech-row span.role { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.tech-row.compact { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.tech-row.compact li { padding: 10px 6px; gap: 5px; }
+.tech-row.compact .logo { width: 22px; height: 22px; }
+.tech-row.compact .tbadge { height: 22px; min-width: 22px; font-size: 9px; border-radius: 6px; }
+.tech-row.compact b { font-size: 13px; font-weight: 550; }
+.logo-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+
+/* Feed hero: what this is, a few live numbers, and where to read more. */
+.hero { position: relative; overflow: hidden; margin: 0 0 24px; padding: 26px 26px 22px; border: 1px solid var(--line); border-radius: 18px;
+  background: var(--card); background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, var(--card)), var(--card) 62%); }
+.hero > * { position: relative; }
+.hero .rings { position: absolute; top: -70px; right: -70px; width: 260px; height: 260px; color: var(--accent); opacity: .16; pointer-events: none; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--accent); font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+.eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 25%, transparent); }
+.hero .lead { margin-bottom: 14px; }
+.stack-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+.stats { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.stats[hidden], .stat[hidden] { display: none; }
+.stat { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); font-size: 13px; color: var(--muted); }
+.stat b { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+.intro-links a.btn { display: inline-block; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); text-decoration: none; font-weight: 550; transition: border-color .15s; }
+.intro-links a.btn:hover { border-color: var(--muted); }
+.intro-links a.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { .intro-links a.btn.primary { color: #10131a; } }
+@media (max-width: 640px) {
+  .hero { padding: 20px 16px 18px; border-radius: 14px; }
+  .hero .rings { width: 180px; height: 180px; top: -60px; right: -60px; }
+}
+
+/* About: the story on the left, a links card on the right; one column on phones. */
+.about-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 28px; align-items: start; }
+.about-grid h2:first-child { margin-top: 0; }
+.profile { position: sticky; top: 20px; }
+.profile .who-name { margin: 0; font-weight: 650; font-size: 17px; }
+.profile .who-role { margin: 2px 0 14px; color: var(--muted); font-size: 14px; }
+.profile ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.profile li a { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); text-decoration: none; font-size: 14px; font-weight: 550; transition: border-color .15s; }
+.profile li a:hover { border-color: var(--muted); }
+.profile li a::after { content: "→"; color: var(--muted); }
+@media (max-width: 760px) {
+  .about-grid { grid-template-columns: 1fr; }
+  .profile { position: static; }
+}
+
+/* Status: a brand logo before the components that have one. */
+.name .logo { margin-right: 6px; }

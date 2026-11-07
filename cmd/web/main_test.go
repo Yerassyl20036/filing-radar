@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -27,6 +29,18 @@ func TestPages(t *testing.T) {
 		{"/about", "text/html", "https://github.com/Yerassyl20036"},
 		{"/status", "text/html", `href="/about"`},
 		{"/static/site.css", "text/css", "--up"},
+		{"/static/logo.svg", "image/svg+xml", "<svg"},
+		{"/static/apple-touch-icon.png", "image/png", "PNG"},
+		{"/static/logos/go.svg", "image/svg+xml", "<svg"},
+		{"/static/logos/postgresql.svg", "image/svg+xml", "<svg"},
+		{"/static/logos/temporal.svg", "image/svg+xml", "<svg"},
+		{"/static/logos/deepseek.svg", "image/svg+xml", "<svg"},
+		{"/static/logos/claude.svg", "image/svg+xml", "<svg"},
+		{"/static/logos/NOTICE.txt", "text/plain", "CC0"},
+		{"/", "text/html", `rel="icon" type="image/svg+xml" href="/static/logo.svg"`},
+		{"/status", "text/html", `href="/static/logo.svg"`},
+		{"/how-it-works", "text/html", "no affiliation or sponsorship"},
+		{"/about", "text/html", "no affiliation or sponsorship"},
 	}
 	for _, tt := range tests {
 		rec := httptest.NewRecorder()
@@ -40,6 +54,23 @@ func TestPages(t *testing.T) {
 		}
 		if !strings.Contains(rec.Body.String(), tt.contains) {
 			t.Errorf("%s: body doesn't contain %q", tt.path, tt.contains)
+		}
+	}
+}
+
+// Every logo the stylesheet masks with must be embedded, or it renders as a blank square.
+func TestLogoFilesExist(t *testing.T) {
+	css, err := static.ReadFile("static/site.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := regexp.MustCompile(`url\("(logos/[a-z]+\.svg)"\)`).FindAllStringSubmatch(string(css), -1)
+	if len(refs) < 5 {
+		t.Fatalf("site.css references %d logos, want at least 5", len(refs))
+	}
+	for _, m := range refs {
+		if _, err := fs.Stat(static, "static/"+m[1]); err != nil {
+			t.Errorf("site.css uses %s, but it isn't embedded: %v", m[1], err)
 		}
 	}
 }

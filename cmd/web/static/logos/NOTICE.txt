@@ -1,0 +1,14 @@
+The brand icons in this folder (go, postgresql, temporal, deepseek, claude,
+caddy, docker, githubactions) are from Simple Icons, version 16.36.0
+(https://simpleicons.org, https://github.com/simple-icons/simple-icons),
+released under CC0 1.0 Universal. The files are unmodified; the site colours
+them with CSS.
+
+The names and logos are trademarks of their respective owners. They are shown
+only to say what this project is built with. Filing radar is not affiliated
+with, sponsored by or endorsed by any of them.
+
+Oracle Cloud and SEC EDGAR have no icon in Simple Icons, so the site shows a
+plain text badge for them instead of a logo.
+
+../logo.svg (the Filing radar mark) is original to this project.

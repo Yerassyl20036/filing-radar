@@ -4,12 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Filing radar · status</title>
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="theme-color" content="#2f6fde">
 <link rel="stylesheet" href="/static/site.css">
 </head>
 <body>
 <main>
   <nav>
-    <a class="brand" href="/">Filing radar</a>
+    <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="26" height="26">Filing radar</a>
     <a href="/">Feed</a>
     <a href="/status" aria-current="page">Status</a>
     <a href="/how-it-works">How it works</a>
@@ -33,6 +36,8 @@
   const grid = document.getElementById('grid');
   const banner = document.getElementById('banner');
   const checked = document.getElementById('checked');
+  // Brand logos for the components that are one product; the name beside it is the label.
+  const LOGOS = { Postgres: 'postgresql', Temporal: 'temporal' };
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -53,7 +58,13 @@
       card.append(el('h2', '', server));
       for (const c of comps) {
         const row = el('div', 'comp');
-        row.append(el('span', 'dot ' + c.state), el('span', 'name', c.name), el('span', 'note', c.note));
+        const name = el('span', 'name', c.name);
+        if (LOGOS[c.name]) {
+          const logo = el('span', 'logo ' + LOGOS[c.name]);
+          logo.setAttribute('aria-hidden', 'true');
+          name.prepend(logo);
+        }
+        row.append(el('span', 'dot ' + c.state), name, el('span', 'note', c.note));
         row.title = c.state;
         card.append(row);
       }

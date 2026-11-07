@@ -5,12 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Filing radar · about</title>
 <meta name="description" content="Who built Filing radar, how it was built, and what it runs on.">
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="theme-color" content="#2f6fde">
 <link rel="stylesheet" href="/static/site.css">
 </head>
 <body>
 <main>
   <nav>
-    <a class="brand" href="/">Filing radar</a>
+    <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="26" height="26">Filing radar</a>
     <a href="/">Feed</a>
     <a href="/status">Status</a>
     <a href="/how-it-works">How it works</a>
@@ -24,27 +27,47 @@
     rules first, every model claim checked against its source, a hard daily budget, and everything observable.
   </p>
 
-  <div class="about">
-    <h2>How it was built</h2>
-    <p>
-      Yerassyl designed and directed it; Claude Code was the main developer and wrote it in about three days.
-      Every stage was reviewed, tested and deployed through a manual pipeline.
-      The measured development cost is on <a href="/how-it-works#costs">How it works</a>.
-    </p>
+  <div class="about-grid">
+    <div class="about">
+      <h2>How it was built</h2>
+      <p>
+        Yerassyl designed and directed it; Claude Code was the main developer and wrote it in about three days.
+        Every stage was reviewed, tested and deployed through a manual pipeline.
+        The measured development cost is on <a href="/how-it-works#costs">How it works</a>.
+      </p>
 
-    <h2>Stack</h2>
-    <p>
-      Go, PostgreSQL, Temporal, DeepSeek (swappable for Gemini, Groq or Claude), Caddy, Docker, GitHub Actions,
-      and three Oracle Cloud free-tier servers.
-    </p>
+      <h2>Stack</h2>
+      <p>
+        Go, PostgreSQL, Temporal, DeepSeek (swappable for Gemini, Groq or Claude), Caddy, Docker, GitHub Actions,
+        and three Oracle Cloud free-tier servers.
+      </p>
+    </div>
 
-    <h2>Links</h2>
-    <ul class="links">
-      <li><a href="https://github.com/Yerassyl20036">GitHub profile</a></li>
-      <li><a href="https://github.com/Yerassyl20036/filing-radar">This project's source</a></li>
-      <li><a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a></li>
-    </ul>
+    <aside class="card profile" aria-labelledby="links-title">
+      <p class="who-name" id="links-title">Yerassyl Maratov</p>
+      <p class="who-role">Backend engineer · Kazakhstan</p>
+      <ul class="links">
+        <li><a href="https://github.com/Yerassyl20036">GitHub profile</a></li>
+        <li><a href="https://github.com/Yerassyl20036/filing-radar">This project's source</a></li>
+        <li><a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a></li>
+      </ul>
+    </aside>
   </div>
+
+  <h2>Built with</h2>
+  <ul class="tech-row" aria-label="Built with">
+    <li><span class="logo go" role="img" aria-label="Go logo"></span><b>Go</b><span class="role">web server and worker</span></li>
+    <li><span class="logo postgresql" role="img" aria-label="PostgreSQL logo"></span><b>PostgreSQL</b><span class="role">filings, labels, notes</span></li>
+    <li><span class="logo temporal" role="img" aria-label="Temporal logo"></span><b>Temporal</b><span class="role">durable workflows</span></li>
+    <li><span class="logo deepseek" role="img" aria-label="DeepSeek logo"></span><b>DeepSeek</b><span class="role">default model</span></li>
+    <li><span class="logo claude" role="img" aria-label="Claude logo"></span><b>Claude</b><span class="role">main developer; drop-in model</span></li>
+    <li><span class="tbadge" role="img" aria-label="Oracle Cloud (text badge)">OCI</span><b>Oracle Cloud</b><span class="role">three free-tier servers</span></li>
+    <li><span class="logo caddy" role="img" aria-label="Caddy logo"></span><b>Caddy</b><span class="role">HTTPS</span></li>
+    <li><span class="logo docker" role="img" aria-label="Docker logo"></span><b>Docker</b><span class="role">every service</span></li>
+    <li><span class="logo githubactions" role="img" aria-label="GitHub Actions logo"></span><b>GitHub Actions</b><span class="role">tests and deploys</span></li>
+    <li><span class="tbadge" role="img" aria-label="SEC EDGAR (text badge)">SEC</span><b>SEC EDGAR</b><span class="role">the filings</span></li>
+  </ul>
+  <p class="logo-note">Logos belong to their owners; no affiliation or sponsorship.</p>
 
   <footer>
     <p class="credit">Built by Yerassyl Maratov · <a href="https://github.com/Yerassyl20036">GitHub</a> · <a href="https://www.linkedin.com/in/yerassyl-maratov">LinkedIn</a> · <a href="https://github.com/Yerassyl20036/filing-radar">Source</a></p>
